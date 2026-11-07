@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BTC/USDT 15m - Trading Chart Testbed</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      background: #0f172a;
+      color: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+    /* Top Navigation */
+    header {
+      background: #1e293b;
+      padding: 10px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    .brand-wrap {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .symbol-info {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+    }
+    .symbol-name {
+      font-size: 18px;
+      font-weight: 800;
+      color: #fff;
+    }
+    .live-price {
+      font-size: 16px;
+      font-weight: 700;
+      color: #10b981;
+    }
+    .timeframes {
+      display: flex;
+      gap: 6px;
+    }
+    .tf-pill {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: #94a3b8;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .tf-pill.active {
+      background: #0284c7;
+      color: #fff;
+      border-color: #38bdf8;
+    }
+    .info-banner {
+      background: rgba(2, 132, 199, 0.15);
+      border: 1px solid rgba(2, 132, 199, 0.3);
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-size: 12px;
+      color: #38bdf8;
+    }
+    /* Main Layout */
+    .chart-layout {
+      display: flex;
+      flex: 1;
+      height: calc(100vh - 55px);
+      position: relative;
+    }
+    .chart-container {
+      flex: 1;
+      position: relative;
+      background: #0b0f19;
+    }
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    /* Side Panel */
+    .side-panel {
+      width: 280px;
+      background: #131b2e;
+      border-left: 1px solid rgba(255, 255, 255, 0.08);
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .panel-card {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 8px;
+      padding: 12px;
+    }
+    .panel-card h3 {
+      font-size: 12px;
+      color: #94a3b8;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+    .orderbook-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      padding: 3px 0;
+      font-variant-numeric: tabular-nums;
+    }
+    .orderbook-row.ask { color: #ef4444; }
+    .orderbook-row.bid { color: #10b981; }
+    .instructions-card {
+      background: rgba(16, 185, 129, 0.1);
+      border: 1px solid rgba(16, 185, 129, 0.25);
+      border-radius: 8px;
+      padding: 12px;
+      font-size: 12px;
+      color: #cbd5e1;
+      line-height: 1.5;
+    }
+    .instructions-card strong {
+      color: #10b981;
+    }
+  </style>
+  <link rel="stylesheet" href="../extension/content/content.css">
+</head>
+<body>
+  <header>
+    <div class="brand-wrap">
+      <div class="symbol-info">
+        <span class="symbol-name" id="chart-symbol">BTC/USDT</span>
+        <span class="live-price" id="chart-price">$67,542.80</span>
+      </div>
+      <div class="timeframes">
+        <span class="tf-pill">1m</span>
+        <span class="tf-pill">5m</span>
+        <span class="tf-pill active">15m</span>
+        <span class="tf-pill">1h</span>
+        <span class="tf-pill">4h</span>
+        <span class="tf-pill">1D</span>
+      </div>
+    </div>
+    <div class="info-banner">
+      ⚡ AI Chart Overlay Active — You can drag the HUD, test timeframes, and mark target levels
+    </div>
+  </header>
+
+  <div class="chart-layout">
+    <div class="chart-container" id="main-chart-container">
+      <canvas id="candlestickCanvas"></canvas>
+    </div>
+
+    <div class="side-panel">
+      <div class="panel-card">
+        <h3>Live Market Depth</h3>
+        <div class="orderbook-row ask"><span>67,580.00</span><span>1.42 BTC</span></div>
+        <div class="orderbook-row ask"><span>67,565.50</span><span>0.85 BTC</span></div>
+        <div class="orderbook-row ask"><span>67,550.00</span><span>2.10 BTC</span></div>
+        <hr style="border-color: rgba(255,255,255,0.08); margin: 6px 0;">
+        <div class="orderbook-row bid"><span>67,535.00</span><span>3.40 BTC</span></div>
+        <div class="orderbook-row bid"><span>67,520.00</span><span>1.15 BTC</span></div>
+        <div class="orderbook-row bid"><span>67,500.00</span><span>4.90 BTC</span></div>
+      </div>
+
+      <div class="instructions-card">
+        <strong>Extension Verification:</strong><br>
+        1. Notice the floating <strong>AI Trader</strong> overlay on the top right.<br>
+        2. Click <strong>"📌 Mark Chart Levels"</strong> to project Entry, Stop Loss, Target 1, Target 2 directly on the chart.<br>
+        3. Switch timeframes (1m, 5m, 15m, 1h) to see dynamic recalculation.
+      </div>
+    </div>
+  </div>
+
+  <!-- Include extension scripts for immediate standalone demo test -->
+  <script src="../extension/lib/technical_indicators.js"></script>
+  <script src="../extension/lib/prediction_engine.js"></script>
+  <script src="../extension/content/overlay.js"></script>
+  <script src="demo_chart.js"></script>
+</body>
+</html>
+

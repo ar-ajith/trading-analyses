@@ -1,0 +1,295 @@
+"""
+Machine Learning & Quantitative Signal Prediction Model
+Combines Scikit-Learn Ensemble ML with Technical Indicator Confluence Scoring.
+"""
+
+import numpy as np
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from typing import Dict, Any, List, Optional
+from indicators import (
+    calculate_ema, calculate_sma, calculate_rsi,
+    calculate_macd, calculate_bollinger_bands,
+    calculate_atr, calculate_support_resistance,
+    detect_candlestick_patterns, detect_smart_money_concepts
+)
+
+class TradingPredictorML:
+    def __init__(self):
+        self.model = RandomForestClassifier(n_estimators=60, max_depth=5, random_state=42)
+        self.is_trained = False
+        
+    def extract_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        close = df['close']
+        volume = df['volume']
+        
+        ema9 = calculate_ema(close, 9)
+        ema21 = calculate_ema(close, 21)
+        ema50 = calculate_ema(close, 50)
+        rsi = calculate_rsi(close, 14)
+        macd = calculate_macd(close)
+        bb = calculate_bollinger_bands(close, 20, 2)
+        vol_sma20 = calculate_sma(volume, 20)
+        
+        feat = pd.DataFrame(index=df.index)
+        feat['ema_spread'] = (ema9 - ema21) / close
+        feat['price_vs_ema50'] = (close - ema50) / close
+        feat['rsi'] = rsi / 100.0
+        feat['macd_hist'] = macd['histogram'] / close
+        feat['bb_pos'] = (close - bb['lower']) / (bb['upper'] - bb['lower']).replace(0, np.nan)
+        feat['vol_ratio'] = volume / vol_sma20.replace(0, np.nan)
+        
+        return feat.fillna(0)
+
+    def train_baseline(self, df: pd.DataFrame):
+        if len(df) < 50:
+            return
+        
+        feat = self.extract_features(df)
+        # Target: 1 if close in 3 bars > current close, else 0
+        target = (df['close'].shift(-3) > df['close']).astype(int)
+        
+        # Drop last 3 rows since target is unknown
+        X = feat.iloc[:-3]
+        y = target.iloc[:-3]
+        
+        if len(X) > 30 and len(np.unique(y)) > 1:
+            self.model.fit(X, y)
+            self.is_trained = True
+
+    def analyze(self, df: pd.DataFrame, symbol: str = "BTCUSDT", timeframe: str = "15m", macro_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        if len(df) < 10:
+            return {"error": "Insufficient candle data for analysis"}
+            
+        close = df['close']
+        volume = df['volume']
+        current_price = float(close.iloc[-1])
+        
+        # Calculate Technical Indicators
+        ema9 = calculate_ema(close, 9)
+        ema21 = calculate_ema(close, 21)
+        ema50 = calculate_ema(close, 50)
+        rsi_series = calculate_rsi(close, 14)
+        macd = calculate_macd(close)
+        bb = calculate_bollinger_bands(close, 20, 2)
+        atr_series = calculate_atr(df, 14)
+        sr = calculate_support_resistance(df)
+        patterns = detect_candlestick_patterns(df)
+        
+        cur_ema9 = float(ema9.iloc[-1])
+        cur_ema21 = float(ema21.iloc[-1])
+        cur_ema50 = float(ema50.iloc[-1]) if not pd.isna(ema50.iloc[-1]) else cur_ema21
+        cur_rsi = round(float(rsi_series.iloc[-1]), 2)
+        cur_macd = round(float(macd['macd'].iloc[-1]), 4)
+        cur_signal = round(float(macd['signal'].iloc[-1]), 4)
+        cur_hist = round(float(macd['histogram'].iloc[-1]), 4)
+        prev_hist = round(float(macd['histogram'].iloc[-2]), 4)
+        cur_atr = float(atr_series.iloc[-1]) if not pd.isna(atr_series.iloc[-1]) else current_price * 0.015
+        
+        vol_sma20 = calculate_sma(volume, 20)
+        avg_vol = float(vol_sma20.iloc[-1]) if not pd.isna(vol_sma20.iloc[-1]) and vol_sma20.iloc[-1] > 0 else float(volume.iloc[-1])
+        vol_ratio = round(float(volume.iloc[-1] / avg_vol), 2)
+        
+        # Quantitative Multi-factor Scoring
+        bullish_score = 0
+        bearish_score = 0
+        reasons = []
+        
+        # Trend check (EMA 9 vs EMA 21)
+        if cur_ema9 > cur_ema21:
+            bullish_score += 20
+            reasons.append("EMA 9 is trading above EMA 21 (Short-term uptrend)")
+        else:
+            bearish_score += 20
+            reasons.append("EMA 9 is trading below EMA 21 (Short-term downtrend)")
+            
+        if current_price > cur_ema50:
+            bullish_score += 10
+            reasons.append("Price is positioned above 50 EMA baseline")
+        else:
+            bearish_score += 10
+            reasons.append("Price is positioned below 50 EMA baseline")
+            
+        # RSI momentum
+        if cur_rsi > 50 and cur_rsi <= 70:
+            bullish_score += 15
+            reasons.append(f"RSI is at {cur_rsi} showing solid bullish momentum")
+        elif cur_rsi < 30:
+            bullish_score += 20
+            reasons.append(f"RSI is oversold at {cur_rsi} (Reversal accumulation)")
+        elif cur_rsi >= 30 and cur_rsi <= 50:
+            bearish_score += 15
+            reasons.append(f"RSI is at {cur_rsi} showing bearish momentum")
+        elif cur_rsi > 70:
+            bearish_score += 20
+            reasons.append(f"RSI is overbought at {cur_rsi} (Distribution / pullback risk)")
+            
+        # MACD momentum
+        if cur_macd > cur_signal and cur_hist > 0:
+            bullish_score += 20
+            if cur_hist > prev_hist:
+                bullish_score += 5
+                reasons.append("MACD histogram is positive and expanding upward")
+            else:
+                reasons.append("MACD is positive in bullish territory")
+        elif cur_macd < cur_signal and cur_hist < 0:
+            bearish_score += 20
+            if cur_hist < prev_hist:
+                bearish_score += 5
+                reasons.append("MACD histogram is negative and expanding downward")
+            else:
+                reasons.append("MACD is negative in bearish territory")
+                
+        # Volume surge
+        if vol_ratio > 1.25:
+            last_candle = df.iloc[-1]
+            if last_candle['close'] > last_candle['open']:
+                bullish_score += 15
+                reasons.append(f"Volume surge ({vol_ratio}x 20-SMA) on bullish bar")
+            else:
+                bearish_score += 15
+                reasons.append(f"Volume surge ({vol_ratio}x 20-SMA) on selling bar")
+                
+        # Candlestick patterns
+        for p in patterns:
+            if p['bias'] == 'BULLISH':
+                bullish_score += 10
+                reasons.append(f"Detected {p['name']} pattern ({p['desc']})")
+            elif p['bias'] == 'BEARISH':
+                bearish_score += 10
+                reasons.append(f"Detected {p['name']} pattern ({p['desc']})")
+
+        # Train and infer ML model probability
+        self.train_baseline(df)
+        ml_bullish_prob = 0.5
+        if self.is_trained:
+            try:
+                latest_features = self.extract_features(df).iloc[[-1]]
+                probs = self.model.predict_proba(latest_features)[0]
+                ml_bullish_prob = float(probs[1]) if len(probs) > 1 else 0.5
+            except Exception:
+                ml_bullish_prob = 0.5
+
+        # Blended Probability (60% Indicator Score + 40% ML Probability)
+        total_score = max(1, bullish_score + bearish_score)
+        indicator_bullish_prob = bullish_score / total_score
+        
+        final_bullish = (0.60 * indicator_bullish_prob) + (0.40 * ml_bullish_prob)
+        bullish_pct = int(np.clip(round(final_bullish * 100), 5, 95))
+        bearish_pct = 100 - bullish_pct
+        
+        # Determine Signal & Trend
+        if bullish_pct >= 65:
+            signal = "BUY"
+            trend = "BULLISH"
+            confidence = bullish_pct
+        elif bearish_pct >= 65:
+            signal = "SELL"
+            trend = "BEARISH"
+            confidence = bearish_pct
+        else:
+            signal = "WAIT"
+            trend = "MILDLY BULLISH" if bullish_pct > 52 else ("MILDLY BEARISH" if bearish_pct > 52 else "NEUTRAL")
+            confidence = max(bullish_pct, bearish_pct)
+            
+        # Dynamic Risk Bracket Targets (3-tier targets from Crypto SignAI)
+        buffer = max(cur_atr * 1.2, current_price * 0.005)
+        entry_price = round(current_price, 2)
+        smc = detect_smart_money_concepts(df)
+        sentiment_score = int(np.clip((bullish_pct - 50) * 2, -100, 100))
+        
+        if signal == "BUY" or "BULLISH" in trend:
+            stop_loss = round(entry_price - buffer, 2)
+            risk = max(0.01, entry_price - stop_loss)
+            target1 = round(entry_price + (risk * 1.5), 2)
+            target2 = round(entry_price + (risk * 2.5), 2)
+            target3 = round(entry_price + (risk * 4.0), 2)
+        elif signal == "SELL" or "BEARISH" in trend:
+            stop_loss = round(entry_price + buffer, 2)
+            risk = max(0.01, stop_loss - entry_price)
+            target1 = round(entry_price - (risk * 1.5), 2)
+            target2 = round(entry_price - (risk * 2.5), 2)
+            target3 = round(entry_price - (risk * 4.0), 2)
+        else:
+            stop_loss = round(entry_price - buffer, 2)
+            target1 = round(entry_price + (buffer * 1.5), 2)
+            target2 = round(entry_price + (buffer * 2.5), 2)
+            target3 = round(entry_price + (buffer * 4.0), 2)
+
+        voice_text = f"AI Alert for {symbol}: {signal} signal with {confidence} percent confidence. Entry at {entry_price}, Stop Loss at {stop_loss}, Target at {target1}."
+            
+        # 1-Year Macro data incorporation
+        macro_info = macro_data or {
+            "high52W": 0.0, "low52W": 0.0, "sma200": 0.0, "sma50": 0.0,
+            "return1Y": "Live", "bias": "MARKET STRUCTURE", "distFrom52WHigh": "--", "goldenCross": "Active"
+        }
+
+        # Live Candle Tips
+        last_c = df.iloc[-1]
+        c_body = abs(last_c['close'] - last_c['open'])
+        c_range = max(0.01, last_c['high'] - last_c['low'])
+        c_upper = last_c['high'] - max(last_c['open'], last_c['close'])
+        c_lower = min(last_c['open'], last_c['close']) - last_c['low']
+
+        if last_c['close'] >= last_c['open'] and c_upper < c_body * 0.2:
+            candle_name = "Bullish Expansion Bar"
+            candle_sit = f"Strong buyer push from {last_c['open']} to {last_c['close']}. Dominant volume."
+            tactical_tip = f"Wait for slight pullback towards {round(entry_price - buffer*0.5, 2)} before entering. Do not chase high wicks."
+        elif last_c['close'] < last_c['open'] and c_lower < c_body * 0.2:
+            candle_name = "Bearish Selling Bar"
+            candle_sit = f"Aggressive selling from {last_c['open']} down to {last_c['close']}."
+            tactical_tip = f"Look for relief bounce towards {round(entry_price + buffer*0.5, 2)} for short entry."
+        else:
+            candle_name = "Consolidation Bar"
+            candle_sit = f"Price balancing between {last_c['low']} and {last_c['high']}."
+            tactical_tip = f"Wait for clean breakout above {target1} or support test at {stop_loss}."
+
+        candle_tips = {
+            "candlePatternName": candle_name,
+            "situation": candle_sit,
+            "tacticalTip": tactical_tip,
+            "stopLossTip": f"Place protective stop loss at {stop_loss}",
+            "previousYearEdge": f"Macro 1-Year Trend is {macro_info.get('bias', 'Active')}. 200-SMA: {macro_info.get('sma200', '--')}"
+        }
+
+        return {
+            "timestamp": int(df['timestamp'].iloc[-1]) if 'timestamp' in df else int(pd.Timestamp.now().timestamp() * 1000),
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "currentPrice": entry_price,
+            "signal": signal,
+            "trend": trend,
+            "confidence": confidence,
+            "bullishProbability": bullish_pct,
+            "bearishProbability": bearish_pct,
+            "sentimentScore": sentiment_score,
+            "entryPrice": entry_price,
+            "stopLoss": stop_loss,
+            "target1": target1,
+            "target2": target2,
+            "target3": target3,
+            "riskRewardRatio": "1:1.5 (T1) · 1:2.5 (T2) · 1:4.0 (T3)",
+            "supportLevels": [sr["s1"], sr["s2"]],
+            "resistanceLevels": [sr["r1"], sr["r2"]],
+            "pivot": sr["pivot"],
+            "macro1Year": macro_info,
+            "candleTips": candle_tips,
+            "indicators": {
+                "rsi": cur_rsi,
+                "macd": cur_macd,
+                "macdSignal": cur_signal,
+                "macdHistogram": cur_hist,
+                "ema9": round(cur_ema9, 2),
+                "ema21": round(cur_ema21, 2),
+                "ema50": round(cur_ema50, 2),
+                "volumeRatio": vol_ratio,
+                "atr": round(cur_atr, 2)
+            },
+            "smc": smc,
+            "reasons": reasons[:5],
+            "patterns": [f"{p['name']} ({p['bias']})" for p in patterns],
+            "voiceText": voice_text
+        }
+
+predictor = TradingPredictorML()
+

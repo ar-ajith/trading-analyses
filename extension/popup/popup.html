@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Trader Pro</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="logo-box">
+        <div class="logo-icon">▲</div>
+        <div class="logo-text">
+          <h1>AI TRADER PRO</h1>
+          <span class="subtext">SMC · Patterns · Smart Levels · Journal</span>
+        </div>
+      </div>
+      <div class="header-right-tools">
+        <div class="backend-badge" id="backend-status" title="Backend connection status">
+          <span class="status-dot"></span>
+          <span class="status-name" id="backend-label">Active</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Top View Switcher: Analysis vs Journal -->
+    <div class="view-switcher">
+      <button class="view-btn active" id="view-tab-analysis">📊 Analysis</button>
+      <button class="view-btn" id="view-tab-journal">📓 Trade Journal (<span id="journal-count">0</span>)</button>
+    </div>
+
+    <!-- VIEW 1: ANALYSIS DASHBOARD -->
+    <div id="view-content-analysis" class="view-section">
+      <!-- Active Tab Sync Banner -->
+      <div class="live-sync-banner" id="live-sync-banner">
+        <div class="live-sync-left">
+          <span class="live-indicator-dot"></span>
+          <span id="live-sync-text">Linking to active chart...</span>
+        </div>
+        <button class="live-sync-btn" id="btn-sync-active" title="Force re-sync">⚡ Sync</button>
+      </div>
+
+      <!-- Market Selector Tabs -->
+      <div class="market-tabs">
+        <button class="market-tab active" data-market="in_stocks" id="tab-in-stocks">Indian (NSE)</button>
+        <button class="market-tab" data-market="crypto" id="tab-crypto">Crypto</button>
+        <button class="market-tab" data-market="us_stocks" id="tab-us-stocks">US Stocks</button>
+        <button class="market-tab" data-market="forex" id="tab-forex">Forex</button>
+      </div>
+
+      <!-- Symbol & Timeframe Selection -->
+      <div class="controls-row">
+        <div class="symbol-select-wrapper">
+          <select id="symbol-select" class="custom-select">
+            <!-- Populated dynamically -->
+          </select>
+        </div>
+        <div class="timeframe-group">
+          <button class="tf-btn active" data-tf="1m">1m</button>
+          <button class="tf-btn" data-tf="5m">5m</button>
+          <button class="tf-btn" data-tf="15m">15m</button>
+          <button class="tf-btn" data-tf="1h">1h</button>
+          <button class="tf-btn" data-tf="1d">1D</button>
+        </div>
+      </div>
+
+      <!-- Main Signal Box (Tradelo AI + Crypto SignAI) -->
+      <div class="signal-card" id="signal-card">
+        <div class="card-header">
+          <span class="symbol-title" id="display-symbol">JIOFIN (1m) Analysis</span>
+          <span class="trend-badge" id="trend-badge">BULLISH</span>
+        </div>
+
+        <div class="signal-main-row">
+          <div class="signal-word-wrap">
+            <h2 class="signal-title buy" id="signal-word">BUY</h2>
+            <span class="current-price-label" id="current-price-display">Current Price: ₹231.20</span>
+          </div>
+          <div class="confidence-circle-wrap">
+            <span class="confidence-val buy" id="confidence-val">78%</span>
+            <span class="confidence-sub">Confidence</span>
+          </div>
+        </div>
+
+        <!-- Sentiment & Probability Bar (ChartSense AI) -->
+        <div class="prob-section">
+          <div class="prob-header">
+            <span>Bullish Probability</span>
+            <strong id="bull-percent" class="green-text">78%</strong>
+          </div>
+          <div class="progress-track">
+            <div class="progress-fill" id="prob-bar-fill" style="width: 78%;"></div>
+          </div>
+          <div class="sentiment-row">
+            <span id="market-sentiment-label">Market Sentiment: Bullish (+56)</span>
+          </div>
+        </div>
+
+        <!-- Trade Plan Grid (3 Targets from Crypto SignAI) -->
+        <div class="trade-grid">
+          <div class="trade-item">
+            <span class="label">Entry Price</span>
+            <strong class="val blue" id="entry-val">₹231.20</strong>
+          </div>
+          <div class="trade-item">
+            <span class="label">Stop Loss</span>
+            <strong class="val red" id="sl-val">₹230.29</strong>
+          </div>
+          <div class="trade-item">
+            <span class="label">Target 1 (1.5 RR)</span>
+            <strong class="val green" id="tp1-val">₹232.56</strong>
+          </div>
+          <div class="trade-item">
+            <span class="label">Target 2 (2.5 RR)</span>
+            <strong class="val green" id="tp2-val">₹233.47</strong>
+          </div>
+        </div>
+      </div>
+
+      <!-- 1-Year (Macro HTF) Previous Year Analysis -->
+      <div class="smc-section" style="border-color: rgba(99, 102, 241, 0.3);">
+        <div class="smc-title-row">
+          <span>📅 1-Year (Macro HTF) Analysis</span>
+          <span class="smc-structure-pill" id="macro-bias-pill" style="background: rgba(99, 102, 241, 0.2); color: #818cf8; border-color: rgba(99, 102, 241, 0.4);">STRONG BULLISH</span>
+        </div>
+        <div class="smc-chips-grid">
+          <div class="smc-chip">
+            <span class="smc-label">52-Week Range</span>
+            <strong class="smc-val" id="macro-52w-val">--</strong>
+          </div>
+          <div class="smc-chip">
+            <span class="smc-label">200 SMA / 1Y Return</span>
+            <strong class="smc-val" id="macro-sma-val">--</strong>
+          </div>
+        </div>
+      </div>
+
+      <!-- Live Candle Situation & Actionable Tips Playbook -->
+      <div class="reasons-box" style="border-left-color: #f59e0b; background: rgba(245, 158, 11, 0.05);">
+        <div class="reasons-title" style="color: #f59e0b;">💡 Live Candle Situation & Pro Trader Tip:</div>
+        <div id="candle-situation-text" style="font-size: 10px; color: #f1f5f9; margin-bottom: 4px; font-weight: 600;">Analyzing setup...</div>
+        <div id="candle-tactical-tip" style="font-size: 10px; color: #38bdf8; background: rgba(56, 189, 248, 0.1); padding: 4px 6px; border-radius: 4px; margin-bottom: 4px;">Waiting for signal...</div>
+        <div id="candle-edge-note" style="font-size: 9px; color: #94a3b8;">1-Year Edge: Calculating historical continuation rate...</div>
+      </div>
+
+      <!-- Smart Money Concepts (ChartLense AI) -->
+      <div class="smc-section">
+        <div class="smc-title-row">
+          <span>🧠 Smart Money Concepts (SMC)</span>
+          <span class="smc-structure-pill" id="smc-structure-pill">BOS Uptrend</span>
+        </div>
+        <div class="smc-chips-grid">
+          <div class="smc-chip">
+            <span class="smc-label">Order Block</span>
+            <strong class="smc-val" id="smc-ob-val">Bullish OB: ₹230.50</strong>
+          </div>
+          <div class="smc-chip">
+            <span class="smc-label">Fair Value Gap</span>
+            <strong class="smc-val" id="smc-fvg-val">FVG: ₹231.00 - ₹231.40</strong>
+          </div>
+        </div>
+      </div>
+
+      <!-- Pattern Recognition (PatternSensei) -->
+      <div class="pattern-section">
+        <div class="pattern-badge" id="pattern-display-badge">
+          ✨ Pattern: Double Bottom (W-Pattern) with Bullish Momentum
+        </div>
+      </div>
+
+      <!-- Technical Indicators -->
+      <div class="indicators-section">
+        <div class="section-title">Technical Indicators Breakdown</div>
+        <div class="indicator-chips-grid">
+          <div class="chip">
+            <span class="chip-name">RSI (14)</span>
+            <strong class="chip-val" id="chip-rsi">63.3</strong>
+            <span class="chip-sub green-text" id="chip-rsi-state">Bullish Momentum</span>
+          </div>
+          <div class="chip">
+            <span class="chip-name">MACD</span>
+            <strong class="chip-val" id="chip-macd">+0.71</strong>
+            <span class="chip-sub green-text" id="chip-macd-state">Bullish Cross</span>
+          </div>
+          <div class="chip">
+            <span class="chip-name">EMA Trend</span>
+            <strong class="chip-val" id="chip-ema">9 > 21 > 50</strong>
+            <span class="chip-sub green-text">Strong Uptrend</span>
+          </div>
+          <div class="chip">
+            <span class="chip-name">Volume Surge</span>
+            <strong class="chip-val" id="chip-vol">1.85x</strong>
+            <span class="chip-sub">Above 20-SMA</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Support & Resistance Levels -->
+      <div class="levels-strip">
+        <div class="level-cell"><span>S2:</span><strong id="lvl-s2">--</strong></div>
+        <div class="level-cell"><span>S1:</span><strong id="lvl-s1">--</strong></div>
+        <div class="level-cell"><span>Pivot:</span><strong id="lvl-p">--</strong></div>
+        <div class="level-cell"><span>R1:</span><strong id="lvl-r1">--</strong></div>
+      </div>
+
+      <!-- AI Reasoning List -->
+      <div class="reasons-box">
+        <div class="reasons-title">AI Analysis Insights:</div>
+        <ul id="reasons-list">
+          <li>EMA 9 is trading above EMA 21 (Short-term uptrend)</li>
+          <li>Price is positioned above 50 EMA baseline</li>
+          <li>RSI is at 63.3 showing solid buying momentum</li>
+        </ul>
+      </div>
+
+      <!-- Actions -->
+      <div class="actions-footer">
+        <button class="btn-action primary" id="btn-mark-chart">
+          📌 Mark on Current Chart Tab
+        </button>
+        <div class="btn-subgroup">
+          <button class="btn-action secondary" id="btn-save-journal">
+            📓 Save Trade
+          </button>
+          <button class="btn-action secondary" id="btn-reanalyze">
+            🔄 Refresh
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- VIEW 2: TRADING JOURNAL (ChartLense AI) -->
+    <div id="view-content-journal" class="view-section" style="display: none;">
+      <div class="journal-stats-card">
+        <div class="stat-box">
+          <span class="stat-num" id="stat-total-trades">0</span>
+          <span class="stat-lbl">Total Trades</span>
+        </div>
+        <div class="stat-box">
+          <span class="stat-num green-text" id="stat-win-rate">--%</span>
+          <span class="stat-lbl">Win Rate</span>
+        </div>
+        <div class="stat-box">
+          <span class="stat-num blue" id="stat-active-signals">0</span>
+          <span class="stat-lbl">Active</span>
+        </div>
+      </div>
+
+      <div class="journal-list-header">
+        <span>Recorded Trades</span>
+        <button class="clear-journal-btn" id="btn-clear-journal">Clear All</button>
+      </div>
+
+      <div class="journal-list" id="journal-list">
+        <div class="journal-empty">No logged trades yet. Click "Save Trade" to log an active signal.</div>
+      </div>
+    </div>
+  </div>
+
+  <script src="../lib/technical_indicators.js"></script>
+  <script src="../lib/prediction_engine.js"></script>
+  <script src="../lib/live_market_data.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
