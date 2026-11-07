@@ -78,6 +78,67 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnSaveJournal = document.getElementById('btn-save-journal');
   const btnClearJournal = document.getElementById('btn-clear-journal');
 
+  const btnToggleSettings = document.getElementById('btn-toggle-settings');
+  const btnCloseSettings = document.getElementById('btn-close-settings');
+  const cloudSettingsDrawer = document.getElementById('cloud-settings-drawer');
+  const inputCloudUrl = document.getElementById('input-cloud-url');
+  const btnSaveCloudUrl = document.getElementById('btn-save-cloud-url');
+  const drawerConnStatus = document.getElementById('drawer-conn-status');
+
+  const DEFAULT_RENDER_URL = 'https://trading-analyses.onrender.com';
+  const savedCloudUrl = localStorage.getItem('tvai_cloud_backend') || DEFAULT_RENDER_URL;
+  if (inputCloudUrl) inputCloudUrl.value = savedCloudUrl;
+
+  if (btnToggleSettings) {
+    btnToggleSettings.addEventListener('click', () => {
+      const isVisible = cloudSettingsDrawer.style.display !== 'none';
+      cloudSettingsDrawer.style.display = isVisible ? 'none' : 'flex';
+      if (!isVisible) testCloudBackendConnection(inputCloudUrl.value);
+    });
+  }
+
+  if (btnCloseSettings) {
+    btnCloseSettings.addEventListener('click', () => {
+      cloudSettingsDrawer.style.display = 'none';
+    });
+  }
+
+  if (btnSaveCloudUrl) {
+    btnSaveCloudUrl.addEventListener('click', () => {
+      const url = (inputCloudUrl.value || '').trim().replace(/\/+$/, '');
+      if (url) {
+        localStorage.setItem('tvai_cloud_backend', url);
+        if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+          chrome.storage.local.set({ tvai_cloud_backend: url });
+        }
+        testCloudBackendConnection(url);
+        checkBackend().then(() => runAnalysis());
+      }
+    });
+  }
+
+  async function testCloudBackendConnection(url) {
+    if (!drawerConnStatus) return;
+    drawerConnStatus.textContent = 'Testing connection...';
+    drawerConnStatus.className = 'drawer-status';
+    try {
+      const ctrl = new AbortController();
+      const tid = setTimeout(() => ctrl.abort(), 3500);
+      const res = await fetch(`${url}/api/health`, { signal: ctrl.signal });
+      clearTimeout(tid);
+      if (res.ok) {
+        drawerConnStatus.textContent = '✅ Connected to Render Cloud (200 OK)';
+        drawerConnStatus.className = 'drawer-status ok';
+      } else {
+        drawerConnStatus.textContent = `⚠️ Cloud response HTTP ${res.status}`;
+        drawerConnStatus.className = 'drawer-status err';
+      }
+    } catch (e) {
+      drawerConnStatus.textContent = '❌ Cloud backend unreachable / sleeping';
+      drawerConnStatus.className = 'drawer-status err';
+    }
+  }
+
   // View Switching
   viewTabAnalysis.addEventListener('click', () => {
     viewTabAnalysis.classList.add('active');

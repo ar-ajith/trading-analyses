@@ -38,6 +38,108 @@ body {
   gap: 8px;
 }
 
+.settings-toggle-btn {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #fff;
+  border-radius: 6px;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.settings-toggle-btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.cloud-settings-drawer {
+  background: rgba(30, 41, 59, 0.95);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+.drawer-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #38bdf8;
+}
+
+.drawer-close {
+  background: none;
+  border: none;
+  color: #94a3b8;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.drawer-close:hover {
+  color: #fff;
+}
+
+.drawer-input-row {
+  display: flex;
+  gap: 6px;
+}
+
+.drawer-input-row input {
+  flex: 1;
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 11px;
+  color: #fff;
+  outline: none;
+}
+
+.drawer-input-row input:focus {
+  border-color: #38bdf8;
+}
+
+.drawer-input-row button {
+  background: #0284c7;
+  border: none;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 5px 12px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.drawer-input-row button:hover {
+  background: #0369a1;
+}
+
+.drawer-status {
+  font-size: 10px;
+  color: #94a3b8;
+}
+
+.drawer-status.ok {
+  color: #10b981;
+}
+
+.drawer-status.err {
+  color: #ef4444;
+}
+
 .logo-icon {
   width: 26px;
   height: 26px;

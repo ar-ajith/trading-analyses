@@ -18,12 +18,26 @@
         </div>
       </div>
       <div class="header-right-tools">
+        <button class="settings-toggle-btn" id="btn-toggle-settings" title="Cloud Backend Settings">⚙️</button>
         <div class="backend-badge" id="backend-status" title="Backend connection status">
           <span class="status-dot"></span>
-          <span class="status-name" id="backend-label">Active</span>
+          <span class="status-name" id="backend-label">Render Cloud</span>
         </div>
       </div>
     </header>
+
+    <!-- Cloud Backend Settings Drawer -->
+    <div class="cloud-settings-drawer" id="cloud-settings-drawer" style="display: none;">
+      <div class="drawer-header">
+        <span>🌐 Cloud AI Backend URL:</span>
+        <button class="drawer-close" id="btn-close-settings">×</button>
+      </div>
+      <div class="drawer-input-row">
+        <input type="text" id="input-cloud-url" value="https://trading-analyses.onrender.com" placeholder="https://trading-analyses.onrender.com" />
+        <button id="btn-save-cloud-url">Save</button>
+      </div>
+      <div class="drawer-status" id="drawer-conn-status">Checking connection...</div>
+    </div>
 
     <!-- Top View Switcher: Analysis vs Journal -->
     <div class="view-switcher">

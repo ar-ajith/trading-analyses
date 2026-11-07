@@ -13,13 +13,20 @@ const LiveMarketData = {
     'https://query2.finance.yahoo.com'
   ],
   BINANCE_URL: 'https://api.binance.com/api/v3/klines',
-  BACKEND_URL: 'http://localhost:8000',
+  DEFAULT_CLOUD_URL: 'https://trading-analyses.onrender.com',
+  LOCAL_BACKEND_URL: 'http://localhost:8000',
 
   getBackendUrl() {
-    if (typeof window !== 'undefined' && window.localStorage && window.localStorage.getItem('tvai_cloud_backend')) {
-      return window.localStorage.getItem('tvai_cloud_backend').replace(/\/+$/, '');
+    if (typeof window !== 'undefined' && window.__TVAI_CUSTOM_BACKEND) {
+      return window.__TVAI_CUSTOM_BACKEND.replace(/\/+$/, '');
     }
-    return this.BACKEND_URL;
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const stored = window.localStorage.getItem('tvai_cloud_backend');
+      if (stored && stored.startsWith('http')) {
+        return stored.replace(/\/+$/, '');
+      }
+    }
+    return this.DEFAULT_CLOUD_URL;
   },
 
   // Normalizes any stock or index name into an exchange-compatible ticker
@@ -316,24 +323,37 @@ const LiveMarketData = {
     const isIndian = market === 'in_stocks' || symbol.toUpperCase().includes('NIFTY') || symbol.toUpperCase().includes('SENSEX');
     const currency = isIndian ? '₹' : '$';
 
-    // Strategy 1: Check Python AI Backend (Cloud or Local Machine Learning Model)
+    // Strategy 1: Check Python AI Backend (Render Cloud or Local Machine Learning Model)
     try {
       const baseUrl = this.getBackendUrl();
       const priceParam = livePrice ? `&price=${livePrice}` : '';
       const backendUrl = `${baseUrl}/api/analyze?symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}&market=${market}${priceParam}`;
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3500);
+      const timeoutId = setTimeout(() => controller.abort(), 4000);
       const res = await fetch(backendUrl, { signal: controller.signal });
       clearTimeout(timeoutId);
 
       if (res.ok) {
         const data = await res.json();
         data.currency = currency;
-        data.backendType = baseUrl.includes('localhost') ? 'Python AI Backend (Local)' : 'Python AI Cloud';
+        data.backendType = baseUrl.includes('localhost') ? 'Python AI Local' : 'Render Cloud AI';
         return data;
       }
     } catch (e) {
-      // Backend not running, proceed to client-side live engine
+      // If cloud was slow or timed out, also check local backend if running
+      try {
+        const localUrl = `${this.LOCAL_BACKEND_URL}/api/analyze?symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}&market=${market}${priceParam}`;
+        const ctrl = new AbortController();
+        const tid = setTimeout(() => ctrl.abort(), 1500);
+        const localRes = await fetch(localUrl, { signal: ctrl.signal });
+        clearTimeout(tid);
+        if (localRes.ok) {
+          const data = await localRes.json();
+          data.currency = currency;
+          data.backendType = 'Python AI Local';
+          return data;
+        }
+      } catch (localErr) {}
     }
 
     // Strategy 2: Fetch 100% Real Live Candles & 1-Year Macro data directly
