@@ -292,12 +292,14 @@ const PredictionEngine = {
     const distFrom52WHigh = Number((((currentPrice - h52) / h52) * 100).toFixed(1));
     const rangePosition = Math.min(100, Math.max(0, Math.round(((currentPrice - l52) / (h52 - l52)) * 100)));
 
+    const ret1yEst = Number((((currentPrice - s200) / s200) * 100).toFixed(1));
+
     return {
       high52W: h52,
       low52W: l52,
       sma200: s200,
       sma50: s50,
-      return1Y: '+18.4%',
+      return1Y: `${ret1yEst >= 0 ? '+' : ''}${ret1yEst}%`,
       bias: currentPrice >= s200 ? 'STRONG BULLISH (>200 SMA)' : 'BEARISH CONSOLIDATION',
       distFrom52WHigh: `${distFrom52WHigh}% from ATH`,
       rangePosition: `${rangePosition}% (Near 52W High)`,

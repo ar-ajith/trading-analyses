@@ -66,12 +66,11 @@ def analyze_market(
             
         analysis = predictor.analyze(df, symbol=clean_sym, timeframe=timeframe, macro_data=macro_data)
 
-        # Detect currency
-        is_indian = (market == "in_stocks") or clean_sym in [
-            "JIOFIN", "SUZLON", "TATASTEEL", "TITAN", "RELIANCE", "TATAMOTORS",
-            "HDFCBANK", "INFY", "TCS", "NIFTY50", "BANKNIFTY", "ONGC", "TECHM",
-            "INOXWIND", "GREAVESCOT", "GOLDBEES", "GMRAIRPORT", "TATAGOLD"
-        ] or clean_sym.endswith(".NS") or clean_sym.endswith(".BO")
+        # Dynamic Currency & Market Detection (Zero Static Lists)
+        is_crypto = (market == "crypto") or clean_sym.endswith("USDT")
+        is_us = (market == "us_stocks")
+        is_forex = (market == "forex") or clean_sym.endswith("=X")
+        is_indian = (market == "in_stocks") or (not is_crypto and not is_us and not is_forex)
         
         analysis["currency"] = "₹" if is_indian else "$"
         analysis["market"] = "in_stocks" if is_indian else market
@@ -133,11 +132,10 @@ async def websocket_live_stream(websocket: WebSocket):
                 df, macro_data = get_live_market_data(sym, interval=tf, market_type=mkt, live_price=px)
                 if df is not None and len(df) >= 5:
                     analysis = predictor.analyze(df, symbol=sym, timeframe=tf, macro_data=macro_data)
-                    is_indian = (mkt == "in_stocks") or sym.endswith(".NS") or sym.endswith(".BO") or sym in [
-                        "JIOFIN", "SUZLON", "TATASTEEL", "TITAN", "RELIANCE", "TATAMOTORS",
-                        "HDFCBANK", "INFY", "TCS", "NIFTY50", "BANKNIFTY", "ONGC", "TECHM",
-                        "INOXWIND", "GREAVESCOT", "GOLDBEES", "GMRAIRPORT", "TATAGOLD"
-                    ]
+                    is_crypto = (mkt == "crypto") or sym.endswith("USDT")
+                    is_us = (mkt == "us_stocks")
+                    is_forex = (mkt == "forex") or sym.endswith("=X")
+                    is_indian = (mkt == "in_stocks") or (not is_crypto and not is_us and not is_forex)
                     analysis["currency"] = "₹" if is_indian else "$"
                     analysis["market"] = "in_stocks" if is_indian else mkt
                     if px is not None and px > 0:
@@ -172,16 +170,11 @@ async def websocket_live_stream(websocket: WebSocket):
         listener_task.cancel()
 
 @app.get("/api/symbols")
-def get_supported_symbols():
+def get_supported_symbols(q: Optional[str] = Query(None, description="Search any stock or crypto")):
     return {
-        "in_stocks": [
-            "JIOFIN", "SUZLON", "TATASTEEL", "TITAN", "RELIANCE", "TATAMOTORS",
-            "HDFCBANK", "INFY", "TCS", "NIFTY50", "BANKNIFTY", "ONGC", "TECHM",
-            "INOXWIND", "GREAVESCOT"
-        ],
-        "crypto": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT"],
-        "us_stocks": ["NVDA", "AAPL", "TSLA", "MSFT", "AMZN", "GOOGL"],
-        "forex": ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCHF"]
+        "status": "dynamic_live_engine",
+        "description": "Universal dynamic monitoring for all NSE/BSE equities, indices, and crypto.",
+        "search": q or "all"
     }
 
 if __name__ == "__main__":

@@ -64,11 +64,16 @@
         <button class="market-tab" data-market="forex" id="tab-forex">Forex</button>
       </div>
 
-      <!-- Symbol & Timeframe Selection -->
+      <!-- Symbol Search & Timeframe Selection (100% Dynamic Live Monitoring) -->
       <div class="controls-row">
-        <div class="symbol-select-wrapper">
+        <div class="symbol-search-container">
+          <div class="search-input-wrap">
+            <span class="search-icon">🔍</span>
+            <input type="text" id="symbol-input" class="symbol-search-input" placeholder="Type ANY Stock e.g. JIOFIN, TMPV, LTF..." autocomplete="off" />
+            <button id="btn-search-go" class="search-go-btn" title="Monitor This Stock">Go</button>
+          </div>
           <select id="symbol-select" class="custom-select">
-            <!-- Populated dynamically -->
+            <option value="">🟢 Live Screen / Watchlist Stocks...</option>
           </select>
         </div>
         <div class="timeframe-group">

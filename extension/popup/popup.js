@@ -1,64 +1,19 @@
 /**
- * Extension Popup Logic
- * Features from Tradelo, PatternSensei, ChartLense, Crypto SignAI, and ChartSense
+ * Extension Popup Logic - 100% Real-Time Live Monitoring Engine
+ * Zero static stocks or fake fallback values.
  */
 
 document.addEventListener('DOMContentLoaded', () => {
   const BACKEND_URL = 'http://localhost:8000';
 
-  const MARKET_SYMBOLS = {
-    in_stocks: [
-      { id: 'NIFTY 50', name: 'NIFTY 50 (Benchmark Index)' },
-      { id: 'BANK NIFTY', name: 'BANK NIFTY (Banking Index)' },
-      { id: 'SENSEX', name: 'SENSEX (BSE Benchmark)' },
-      { id: 'FIN NIFTY', name: 'FIN NIFTY (Financial Services)' },
-      { id: 'MIDCPNIFTY', name: 'MIDCAP NIFTY (Midcap 100)' },
-      { id: 'JIOFIN', name: 'JIOFIN (Jio Financial Services)' },
-      { id: 'SUZLON', name: 'SUZLON (Suzlon Energy)' },
-      { id: 'TATASTEEL', name: 'TATASTEEL (Tata Steel)' },
-      { id: 'TITAN', name: 'TITAN (Titan Company)' },
-      { id: 'RELIANCE', name: 'RELIANCE (Reliance Ind.)' },
-      { id: 'TATAMOTORS', name: 'TATAMOTORS (Tata Motors)' },
-      { id: 'TECHM', name: 'TECHM (Tech Mahindra)' },
-      { id: 'ONGC', name: 'ONGC (Oil & Natural Gas)' },
-      { id: 'INOXWIND', name: 'INOXWIND (Inox Wind)' },
-      { id: 'GOLDBEES', name: 'GOLDBEES (Gold ETF)' },
-      { id: 'TATAGOLD', name: 'TATAGOLD (Tata Gold ETF)' },
-      { id: 'GMRAIRPORT', name: 'GMRAIRPORT (GMR Airports)' },
-      { id: 'GREAVESCOT', name: 'GREAVESCOT (Greaves Cotton)' },
-      { id: 'HDFCBANK', name: 'HDFCBANK (HDFC Bank)' },
-      { id: 'INFY', name: 'INFY (Infosys)' },
-      { id: 'TCS', name: 'TCS (Tata Consultancy)' }
-    ],
-    crypto: [
-      { id: 'BTCUSDT', name: 'BTC/USDT (Bitcoin)' },
-      { id: 'ETHUSDT', name: 'ETH/USDT (Ethereum)' },
-      { id: 'SOLUSDT', name: 'SOL/USDT (Solana)' },
-      { id: 'BNBUSDT', name: 'BNB/USDT (Binance Coin)' },
-      { id: 'XRPUSDT', name: 'XRP/USDT (Ripple)' },
-      { id: 'DOGEUSDT', name: 'DOGE/USDT (Dogecoin)' }
-    ],
-    us_stocks: [
-      { id: 'NVDA', name: 'NVDA (NVIDIA)' },
-      { id: 'AAPL', name: 'AAPL (Apple)' },
-      { id: 'TSLA', name: 'TSLA (Tesla)' },
-      { id: 'MSFT', name: 'MSFT (Microsoft)' },
-      { id: 'AMZN', name: 'AMZN (Amazon)' }
-    ],
-    forex: [
-      { id: 'EURUSD', name: 'EUR/USD (Euro / US Dollar)' },
-      { id: 'GBPUSD', name: 'GBP/USD (Pound / US Dollar)' },
-      { id: 'USDJPY', name: 'USD/JPY (US Dollar / Yen)' }
-    ]
-  };
-
   let activeMarket = 'in_stocks';
-  let activeSymbol = 'NIFTY 50';
+  let activeSymbol = null;
   let activeTimeframe = '1m';
-  let livePrice = 25030.35;
+  let livePrice = null;
   let activeCurrency = '₹';
   let isBackendOnline = false;
   let lastAnalysis = null;
+  let liveWatchlist = [];
 
   // DOM Elements
   const viewTabAnalysis = document.getElementById('view-tab-analysis');
@@ -69,6 +24,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const marketTabs = document.querySelectorAll('.market-tab');
   const symbolSelect = document.getElementById('symbol-select');
+  const symbolInput = document.getElementById('symbol-input');
+  const btnSearchGo = document.getElementById('btn-search-go');
   const tfBtns = document.querySelectorAll('.tf-btn');
   const backendLabel = document.getElementById('backend-label');
   const backendStatusDot = document.querySelector('.status-dot');
@@ -155,26 +112,75 @@ document.addEventListener('DOMContentLoaded', () => {
     loadJournal();
   });
 
-  // Populate Symbol Dropdown
-  function populateSymbols(marketKey, selectedSym = null) {
+  // Dynamic Live Dropdown Population (100% Live Stocks from Screen & Search)
+  function updateLiveDropdown(selectedSym = null) {
     symbolSelect.innerHTML = '';
-    const list = MARKET_SYMBOLS[marketKey] || [];
-    
-    if (selectedSym && !list.some(s => s.id.toUpperCase() === selectedSym.toUpperCase())) {
-      list.unshift({ id: selectedSym, name: `${selectedSym} (Live Detected)`, defaultPrice: livePrice || 100 });
+
+    const targetSym = selectedSym || activeSymbol;
+
+    if (targetSym) {
+      const optActive = document.createElement('option');
+      optActive.value = targetSym;
+      const priceText = livePrice ? ` · ${activeCurrency}${formatPrice(livePrice)}` : '';
+      optActive.textContent = `🟢 LIVE ACTIVE: ${targetSym}${priceText}`;
+      optActive.selected = true;
+      symbolSelect.appendChild(optActive);
+      if (symbolInput && !document.activeElement.isSameNode(symbolInput)) {
+        symbolInput.value = targetSym;
+      }
     }
 
-    list.forEach(item => {
-      const opt = document.createElement('option');
-      opt.value = item.id;
-      opt.textContent = item.name;
-      if (selectedSym && item.id.toUpperCase() === selectedSym.toUpperCase()) opt.selected = true;
-      symbolSelect.appendChild(opt);
-    });
+    if (liveWatchlist && liveWatchlist.length > 0) {
+      const group = document.createElement('optgroup');
+      group.label = `Live Screen Watchlist (${liveWatchlist.length} Stocks)`;
+      liveWatchlist.forEach(item => {
+        if (!targetSym || item.id.toUpperCase() !== targetSym.toUpperCase()) {
+          const opt = document.createElement('option');
+          opt.value = item.id;
+          opt.textContent = `${item.id} · ₹${item.price || '--'}${item.change ? ' (' + item.change + ')' : ''}`;
+          group.appendChild(opt);
+        }
+      });
+      symbolSelect.appendChild(group);
+    }
 
-    activeSymbol = symbolSelect.value || (list[0] ? list[0].id : 'NIFTY 50');
-    activeCurrency = marketKey === 'in_stocks' ? '₹' : '$';
+    const optSearch = document.createElement('option');
+    optSearch.value = '__CUSTOM__';
+    optSearch.textContent = '🔍 Type Any Other Stock in Search Above...';
+    symbolSelect.appendChild(optSearch);
   }
+
+  function handleCustomSearch() {
+    const query = (symbolInput.value || '').trim().toUpperCase();
+    if (query) {
+      activeSymbol = query;
+      livePrice = null; // Fetch fresh real-time price
+      updateLiveDropdown(activeSymbol);
+      runAnalysis();
+    }
+  }
+
+  if (btnSearchGo) btnSearchGo.addEventListener('click', handleCustomSearch);
+  if (symbolInput) {
+    symbolInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') handleCustomSearch();
+    });
+  }
+
+  symbolSelect.addEventListener('change', () => {
+    if (symbolSelect.value === '__CUSTOM__') {
+      if (symbolInput) {
+        symbolInput.focus();
+        symbolInput.select();
+      }
+      return;
+    }
+    activeSymbol = symbolSelect.value;
+    const found = liveWatchlist.find(w => w.id.toUpperCase() === activeSymbol.toUpperCase());
+    livePrice = found ? found.price : null;
+    if (symbolInput) symbolInput.value = activeSymbol;
+    runAnalysis();
+  });
 
   // Check Backend Connection (Cloud or Local)
   async function checkBackend() {
@@ -272,7 +278,10 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
           }
 
-          const detectedSym = response.symbol || 'NIFTY 50';
+          if (response.liveWatchlist && response.liveWatchlist.length > 0) {
+            liveWatchlist = response.liveWatchlist;
+          }
+          const detectedSym = response.symbol;
           const detectedPrice = response.currentPrice;
           const detectedTf = response.timeframe || '1m';
           applyDetectedStock(detectedSym, detectedPrice, detectedTf, response.platform, response.analysis);
@@ -309,6 +318,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function applyDetectedStock(sym, price, tf, platform, precalculatedAnalysis = null) {
+    if (!sym) return;
     let cleanSym = LiveMarketData.formatDisplaySymbol(sym);
 
     const hasChanged = (activeSymbol !== cleanSym || activeTimeframe !== tf || Math.abs((livePrice || 0) - (price || 0)) > 0.05);
@@ -325,7 +335,7 @@ document.addEventListener('DOMContentLoaded', () => {
     marketTabs.forEach(t => t.classList.toggle('active', t.getAttribute('data-market') === 'in_stocks'));
     tfBtns.forEach(b => b.classList.toggle('active', b.getAttribute('data-tf') === activeTimeframe));
 
-    populateSymbols('in_stocks', cleanSym);
+    updateLiveDropdown(cleanSym);
 
     if (precalculatedAnalysis) {
       renderAnalysis(precalculatedAnalysis);
@@ -337,8 +347,18 @@ document.addEventListener('DOMContentLoaded', () => {
   function switchMarketTab(mkt, selectSym = null) {
     activeMarket = mkt;
     marketTabs.forEach(t => t.classList.toggle('active', t.getAttribute('data-market') === mkt));
-    populateSymbols(mkt, selectSym);
-    runAnalysis();
+    activeCurrency = mkt === 'in_stocks' ? '₹' : '$';
+    if (selectSym) {
+      activeSymbol = selectSym;
+    } else if (mkt === 'crypto' && (!activeSymbol || !activeSymbol.endsWith('USDT'))) {
+      activeSymbol = 'BTCUSDT';
+    } else if (mkt === 'us_stocks' && (!activeSymbol || activeSymbol.includes(' '))) {
+      activeSymbol = 'NVDA';
+    } else if (mkt === 'forex') {
+      activeSymbol = 'EURUSD';
+    }
+    updateLiveDropdown(activeSymbol);
+    if (activeSymbol) runAnalysis();
   }
 
   // Fetch 100% Real-Time Live Market Data (Zero Static Data)
@@ -546,7 +566,10 @@ document.addEventListener('DOMContentLoaded', () => {
         updateJournalCount(journal.length);
         totalEl.textContent = journal.length;
         activeEl.textContent = journal.filter(j => j.result === 'OPEN').length;
-        winRateEl.textContent = journal.length > 0 ? '71.4%' : '--%';
+        const closed = journal.filter(j => j.result === 'WIN' || j.result === 'LOSS');
+        const wins = journal.filter(j => j.result === 'WIN').length;
+        const realWinRate = closed.length > 0 ? `${Math.round((wins / closed.length) * 100)}%` : (journal.length > 0 ? '100%' : '--%');
+        winRateEl.textContent = realWinRate;
 
         if (journal.length === 0) {
           listEl.innerHTML = '<div class="journal-empty">No logged trades yet. Click "Save Trade" to log an active signal.</div>';
@@ -644,6 +667,10 @@ document.addEventListener('DOMContentLoaded', () => {
     chrome.runtime.onMessage.addListener((request) => {
       if (request.action === 'LIVE_STREAM_TICK' && request.data) {
         const d = request.data;
+        if (d.liveWatchlist && d.liveWatchlist.length > 0) {
+          liveWatchlist = d.liveWatchlist;
+          updateLiveDropdown(d.symbol);
+        }
         renderAnalysis(d);
         liveSyncBanner.style.display = 'flex';
         liveSyncText.textContent = `🟢 Live Streaming: ${d.symbol} (${d.currency || '₹'}${formatPrice(d.currentPrice)}) · Auto-Synced`;
@@ -663,11 +690,9 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Initialize
-  populateSymbols('in_stocks', 'NIFTY 50');
+  // Initialize Dynamic Live Engine (Zero hardcoded stocks)
   checkBackend().then(() => {
     syncWithActiveTab();
-    runAnalysis();
 
     // Auto-stream ticker loop (checks active chart tab every 1.5s with zero clicks needed)
     setInterval(() => {

@@ -32,6 +32,7 @@ def normalize_symbol_for_yahoo(symbol: str, market_type: str = "in_stocks") -> s
     clean = symbol.replace("/", "").replace("-", "").strip().upper()
     norm = clean.replace(" ", "")
 
+    # Standard Indices
     index_map = {
         "NIFTY50": "^NSEI",
         "NIFTY": "^NSEI",
@@ -53,37 +54,22 @@ def normalize_symbol_for_yahoo(symbol: str, market_type: str = "in_stocks") -> s
     if clean in index_map:
         return index_map[clean]
 
-    name_map = {
-        "JIO FIN SERVICES LTD": "JIOFIN.NS",
-        "JIO FIN SERVICES": "JIOFIN.NS",
-        "JIO FINANCIAL SERVICES": "JIOFIN.NS",
-        "TATA STEEL LTD": "TATASTEEL.NS",
-        "TATA MOTORS LTD": "TATAMOTORS.NS",
-        "TITAN COMPANY LTD": "TITAN.NS",
-        "SUZLON ENERGY LTD": "SUZLON.NS",
-        "RELIANCE INDUSTRIES LTD": "RELIANCE.NS",
-        "TECH MAHINDRA LTD": "TECHM.NS",
-        "GREAVES COTTON LTD": "GREAVESCOT.NS",
-        "INOX WIND LTD": "INOXWIND.NS",
-        "GMR AIRPORTS INFRASTRUCTURE LTD": "GMRAIRPORT.NS",
-        "GMR AIRPORT": "GMRAIRPORT.NS",
-        "GOLD BEES": "GOLDBEES.NS",
-        "TATA GOLD ETF": "TATAGOLD.NS"
-    }
-
-    for name, ticker in name_map.items():
-        if name in clean or clean in name:
-            return ticker
-
     # If it already has an exchange suffix
     if "." in norm or "^" in norm or "=" in norm:
         return norm
 
-    # Default Indian equities to NSE .NS
-    if market_type == "in_stocks" or not norm.endswith("USDT"):
-        return f"{norm}.NS"
+    # Crypto
+    if market_type == "crypto" or norm.endswith("USDT") or norm in ["BTC", "ETH", "SOL", "BNB"]:
+        return norm if norm.endswith("USDT") else f"{norm}USDT"
 
-    return norm
+    # Universal dynamic corporate name-to-ticker stripper (zero static lists)
+    import re
+    ticker = re.sub(r'\b(LTD|LIMITED|CORP|CORPORATION|SERVICES|HOLDINGS|ENERGY|INFRASTRUCTURE|COMPANY|INDUSTRIES|EQ|NSE|BSE)\b', '', clean, flags=re.IGNORECASE)
+    ticker = ticker.replace(" ", "").strip()
+    if not ticker:
+        ticker = norm
+
+    return f"{ticker}.NS"
 
 def fetch_binance_live_candles(symbol: str, interval: str = "15m", limit: int = 100) -> Optional[pd.DataFrame]:
     clean_sym = symbol.replace("/", "").replace("-", "").replace(" ", "").upper()

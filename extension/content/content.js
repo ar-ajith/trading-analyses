@@ -6,8 +6,8 @@
 (function () {
   'use strict';
 
-  let currentSymbol = 'NIFTY 50';
-  let currentPrice = 25030.35;
+  let currentSymbol = null;
+  let currentPrice = null;
   let currentTimeframe = '1m';
   let currentMarket = 'in_stocks';
   let currentCurrency = '₹';
@@ -18,6 +18,49 @@
   const isUpstox = window.location.hostname.includes('upstox.com');
   const isTradingView = window.location.hostname.includes('tradingview.com');
   const isBinance = window.location.hostname.includes('binance.com');
+
+  // Dynamically extract the full live watchlist from Upstox Pro
+  function extractLiveWatchlist() {
+    const list = [];
+    if (!isUpstox) return list;
+
+    const seen = new Set();
+    const candidateElements = document.querySelectorAll('*');
+    for (const el of candidateElements) {
+      if (el.children.length === 0 && (el.textContent === 'NSE EQ' || el.textContent === 'BSE A' || el.textContent === 'NSE' || el.textContent === 'BSE')) {
+        const row = el.closest('div[class*="item"], div[class*="row"], li, div[role="row"]') || (el.parentElement && el.parentElement.parentElement);
+        if (row && !seen.has(row)) {
+          seen.add(row);
+          const text = row.innerText || '';
+          const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+          let itemSym = null, itemPrice = null, itemChange = '';
+
+          for (const line of lines) {
+            if (!itemSym && /^[A-Z0-9_\-\.\^]{2,16}$/.test(line) && !['NSE', 'BSE', 'EQ', 'BUY', 'SELL', 'QTY', 'LIMIT', 'MARKET', 'ORDERS'].includes(line)) {
+              itemSym = line;
+            } else if (!itemPrice) {
+              const pm = line.match(/^([0-9,]+(?:\.[0-9]+)?)$/);
+              if (pm) itemPrice = parseFloat(pm[1].replace(/,/g, ''));
+            }
+            if (line.includes('%')) {
+              itemChange = line;
+            }
+          }
+
+          if (itemSym && itemPrice && !seen.has(itemSym)) {
+            seen.add(itemSym);
+            list.push({
+              id: itemSym,
+              name: `${itemSym} · ₹${itemPrice}${itemChange ? ' (' + itemChange + ')' : ''}`,
+              price: itemPrice,
+              change: itemChange
+            });
+          }
+        }
+      }
+    }
+    return list;
+  }
 
   // Universal detector for any stock, index, or crypto pair
   function detectContext() {
@@ -37,7 +80,6 @@
       const titleMatch = title.match(/^(.+?)(?:\s+(?:EQ|NSE|BSE|[A-Z]))?\s+([0-9,]+(?:\.[0-9]+)?)(?:\s*[▲▼+%-]|$)/i);
       if (titleMatch) {
         let rawSym = titleMatch[1].replace(/\b(EQ|NSE|BSE)\b/gi, '').trim();
-        // Remove trailing non-alphanumeric except space
         rawSym = rawSym.replace(/[^\w\s]/g, '').trim();
         if (rawSym && !['UPSTOX', 'PRO', 'TRADING', 'CHARTS', 'DASHBOARD'].includes(rawSym.toUpperCase())) {
           sym = rawSym;
@@ -131,15 +173,19 @@
       if (match) sym = `${match[1]}${match[2]}`.toUpperCase();
     }
 
-    sym = sym || currentSymbol || 'NIFTY 50';
-    // Format index names consistently
+    sym = sym || currentSymbol || 'LIVE ASSET';
     if (sym.replace(/\s/g, '').toUpperCase() === 'NIFTY50') sym = 'NIFTY 50';
     if (sym.replace(/\s/g, '').toUpperCase() === 'BANKNIFTY') sym = 'BANK NIFTY';
 
     return {
       platform: isUpstox ? 'upstox' : (isTradingView ? 'tradingview' : (isBinance ? 'binance' : 'web')),
       symbol: sym,
-      currentPrice: price || currentPrice || 25030.35,
+      currentPrice: price || currentPrice || null,
+      timeframe: tf || currentTimeframe || '1m',
+      market: mkt,
+      currency: curr
+    };
+  }
       timeframe: tf || currentTimeframe || '1m',
       market: mkt,
       currency: curr
@@ -149,6 +195,7 @@
   function broadcastLiveTick(data) {
     if (!data) return;
     try {
+      data.liveWatchlist = extractLiveWatchlist();
       if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
         chrome.runtime.sendMessage({ action: 'LIVE_STREAM_TICK', data }).catch(() => {});
       }
@@ -270,6 +317,7 @@
             market: ctx.market || currentMarket,
             currency: ctx.currency || currentCurrency,
             platform: ctx.platform,
+            liveWatchlist: extractLiveWatchlist(),
             analysis: TVAI_Overlay.currentData
           });
           return true;

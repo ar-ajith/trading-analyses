@@ -36,7 +36,7 @@ const LiveMarketData = {
     let clean = symbol.trim().toUpperCase().replace(/[^\w\s\.\-\^=]/g, '');
     let norm = clean.replace(/\s+/g, '');
 
-    // Common Upstox / Indian Index mappings
+    // Standard Indices
     const indexMap = {
       'NIFTY50': '^NSEI',
       'NIFTY': '^NSEI',
@@ -57,36 +57,7 @@ const LiveMarketData = {
 
     if (indexMap[norm]) return indexMap[norm];
 
-    // Company names from Upstox Chart Legend mappings
-    const nameMap = {
-      'JIO FIN SERVICES LTD': 'JIOFIN.NS',
-      'JIO FIN SERVICES': 'JIOFIN.NS',
-      'JIO FINANCIAL SERVICES': 'JIOFIN.NS',
-      'TATA STEEL LTD': 'TATASTEEL.NS',
-      'TATA MOTORS LTD': 'TATAMOTORS.NS',
-      'TITAN COMPANY LTD': 'TITAN.NS',
-      'SUZLON ENERGY LTD': 'SUZLON.NS',
-      'RELIANCE INDUSTRIES LTD': 'RELIANCE.NS',
-      'TECH MAHINDRA LTD': 'TECHM.NS',
-      'GREAVES COTTON LTD': 'GREAVESCOT.NS',
-      'INOX WIND LTD': 'INOXWIND.NS',
-      'GMR AIRPORTS INFRASTRUCTURE LTD': 'GMRAIRPORT.NS',
-      'GMR AIRPORT': 'GMRAIRPORT.NS',
-      'GOLD BEES': 'GOLDBEES.NS',
-      'TATA GOLD ETF': 'TATAGOLD.NS',
-      'OIL & NATURAL GAS CORP': 'ONGC.NS',
-      'HDFC BANK LTD': 'HDFCBANK.NS',
-      'INFOSYS LTD': 'INFY.NS',
-      'TATA CONSULTANCY SERVICES': 'TCS.NS'
-    };
-
-    for (const [name, ticker] of Object.entries(nameMap)) {
-      if (clean.includes(name) || name.includes(clean)) {
-        return ticker;
-      }
-    }
-
-    // Already has exchange suffix
+    // Already has an exchange ticker format
     if (clean.includes('.') || clean.includes('^') || clean.includes('=')) {
       return clean;
     }
@@ -96,13 +67,21 @@ const LiveMarketData = {
       return norm.endsWith('USDT') ? norm : `${norm}USDT`;
     }
 
+    // Universal dynamic corporate name-to-ticker stripper (zero static lists)
+    let ticker = clean
+      .replace(/\b(LTD|LIMITED|CORP|CORPORATION|SERVICES|HOLDINGS|ENERGY|INFRASTRUCTURE|COMPANY|INDUSTRIES|EQ|NSE|BSE)\b/gi, '')
+      .replace(/\s+/g, '')
+      .trim();
+
+    if (!ticker) ticker = norm;
+
     // Default Indian Equities to NSE (.NS)
-    return `${norm}.NS`;
+    return `${ticker}.NS`;
   },
 
   // Display-friendly Symbol formatting
   formatDisplaySymbol(rawSymbol) {
-    if (!rawSymbol) return 'NIFTY 50';
+    if (!rawSymbol) return 'LIVE ASSET';
     let s = rawSymbol.trim().toUpperCase().replace(/\.NS$|\.BO$|=X$/g, '');
     if (s === '^NSEI' || s === 'NIFTY' || s === 'NIFTY50') return 'NIFTY 50';
     if (s === '^NSEBANK' || s === 'BANKNIFTY') return 'BANK NIFTY';
