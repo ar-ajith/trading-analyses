@@ -146,6 +146,18 @@
     };
   }
 
+  function broadcastLiveTick(data) {
+    if (!data) return;
+    try {
+      if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+        chrome.runtime.sendMessage({ action: 'LIVE_STREAM_TICK', data }).catch(() => {});
+      }
+      if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+        chrome.storage.local.set({ latestLiveAnalysis: data });
+      }
+    } catch (e) {}
+  }
+
   // Perform 100% Real-Time Live Analysis (Zero Static Data)
   async function performAnalysis() {
     const ctx = detectContext();
@@ -156,7 +168,6 @@
     currentCurrency = ctx.currency;
 
     const signature = `${ctx.symbol}_${ctx.timeframe}_${ctx.currentPrice}`;
-    TVAI_Overlay.setStatus(`Analyzing Live Feed for ${ctx.symbol} (${ctx.currency}${currentPrice})...`, true);
 
     try {
       // 1. Fetch complete live data (Backend AI model if online, or direct exchange live feeds)
@@ -172,12 +183,24 @@
       data.symbol = LiveMarketData.formatDisplaySymbol(currentSymbol);
       if (currentPrice && currentPrice > 0) {
         data.currentPrice = currentPrice;
-        data.entryPrice = currentPrice;
       }
 
       TVAI_Overlay.updateAnalysis(data);
       TVAI_Overlay.setStatus(`🟢 Live: ${data.symbol} (${currentCurrency}${data.currentPrice}) · ${data.backendType || 'Active'}`, true);
       lastDetectedSignature = signature;
+
+      // Broadcast live tick to popup in real-time (Zero user clicks needed)
+      broadcastLiveTick(data);
+
+      // Connect or re-sync WebSocket live stream
+      LiveMarketData.connectWebSocketStream(currentSymbol, currentTimeframe, currentMarket, currentPrice, (liveStreamData) => {
+        liveStreamData.currency = currentCurrency;
+        liveStreamData.platform = ctx.platform;
+        liveStreamData.symbol = LiveMarketData.formatDisplaySymbol(currentSymbol);
+        TVAI_Overlay.updateAnalysis(liveStreamData);
+        broadcastLiveTick(liveStreamData);
+      });
+
       return data;
     } catch (err) {
       console.warn('[AI Trader Pro] Live analysis fetch error:', err);
@@ -200,18 +223,18 @@
       titleObserver.observe(titleEl, { childList: true, characterData: true, subtree: true });
     }
 
-    // Check periodically for stock clicks or tab switches
+    // High-frequency ticker: checks for stock clicks or live price flutters every 800ms
     setInterval(() => {
       const ctx = detectContext();
       const sig = `${ctx.symbol}_${ctx.timeframe}_${ctx.currentPrice}`;
       if (sig !== lastDetectedSignature) {
         performAnalysis();
       }
-    }, 1200);
+    }, 800);
 
     // Watchlist and navigation clicks
     document.addEventListener('click', () => {
-      setTimeout(performAnalysis, 250);
+      setTimeout(performAnalysis, 200);
     }, true);
   }
 

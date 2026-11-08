@@ -377,6 +377,61 @@ const LiveMarketData = {
     analysis.currency = currency;
     analysis.backendType = 'Client Live Engine (Direct Exchange Feeds)';
     return analysis;
+  },
+
+  // WebSocket Real-time live streaming connection
+  wsConnection: null,
+  connectWebSocketStream(symbol, timeframe, market, livePrice, onTick) {
+    const baseUrl = this.getBackendUrl();
+    const wsUrl = baseUrl.replace(/^http/, 'ws') + '/ws/live';
+
+    if (this.wsConnection && this.wsConnection.readyState === 1) { // 1 = OPEN
+      try {
+        this.wsConnection.send(JSON.stringify({
+          action: 'subscribe',
+          symbol,
+          timeframe,
+          market,
+          price: livePrice
+        }));
+      } catch (e) {}
+      return this.wsConnection;
+    }
+
+    try {
+      const ws = new WebSocket(wsUrl);
+      this.wsConnection = ws;
+
+      ws.onopen = () => {
+        try {
+          ws.send(JSON.stringify({
+            action: 'subscribe',
+            symbol,
+            timeframe,
+            market,
+            price: livePrice
+          }));
+        } catch (e) {}
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          if (payload.type === 'LIVE_TICK' && payload.data) {
+            onTick(payload.data);
+          }
+        } catch (e) {}
+      };
+
+      ws.onerror = () => {};
+      ws.onclose = () => {
+        this.wsConnection = null;
+      };
+
+      return ws;
+    } catch (err) {
+      return null;
+    }
   }
 };
 

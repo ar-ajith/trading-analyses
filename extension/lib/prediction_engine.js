@@ -11,6 +11,273 @@
  */
 
 const PredictionEngine = {
+  // Stateful Trade Lifecycle Tracking by (Symbol, Timeframe)
+  activeTrades: {},
+
+  getTradeKey(symbol, timeframe) {
+    const clean = (symbol || 'SYMBOL').toUpperCase().replace(/\.NS|\.BO|\^/g, '').trim();
+    return `${clean}_${(timeframe || '1m').toLowerCase()}`;
+  },
+
+  updateTradeLifecycle(symbol, timeframe, currentPrice, rawSignal, rawTrend, confidence, buffer, smc) {
+    const key = this.getTradeKey(symbol, timeframe);
+    let trade = this.activeTrades[key];
+
+    // Expire trades older than 4 hours for 1m
+    if (trade && Date.now() - trade.startTime > 4 * 3600 * 1000) {
+      delete this.activeTrades[key];
+      trade = null;
+    }
+
+    const minConf = (timeframe === '1m' || timeframe === '5m') ? 63 : 60;
+
+    // CASE 1: No active trade yet
+    if (!trade) {
+      if ((rawSignal === 'BUY' || rawSignal === 'SELL') && confidence >= minConf) {
+        const direction = rawSignal;
+        const entryPrice = Number(currentPrice.toFixed(2));
+        const riskBuf = Math.max(buffer, entryPrice * 0.005);
+        let stopLoss = 0, target1 = 0, target2 = 0, target3 = 0;
+
+        if (direction === 'BUY') {
+          stopLoss = Number((entryPrice - riskBuf).toFixed(2));
+          const risk = Math.max(0.01, entryPrice - stopLoss);
+          target1 = Number((entryPrice + risk * 1.5).toFixed(2));
+          target2 = Number((entryPrice + risk * 2.5).toFixed(2));
+          target3 = Number((entryPrice + risk * 4.0).toFixed(2));
+        } else {
+          stopLoss = Number((entryPrice + riskBuf).toFixed(2));
+          const risk = Math.max(0.01, stopLoss - entryPrice);
+          target1 = Number((entryPrice - risk * 1.5).toFixed(2));
+          target2 = Number((entryPrice - risk * 2.5).toFixed(2));
+          target3 = Number((entryPrice - risk * 4.0).toFixed(2));
+        }
+
+        trade = {
+          symbol,
+          timeframe,
+          direction,
+          status: 'ACTIVE_HOLD',
+          entryPrice,
+          initialStopLoss: stopLoss,
+          stopLoss,
+          target1,
+          target2,
+          target3,
+          startTime: Date.now(),
+          tp1Hit: false,
+          tp2Hit: false,
+          trailingActive: false,
+          highestPrice: currentPrice,
+          lowestPrice: currentPrice
+        };
+        this.activeTrades[key] = trade;
+
+        return {
+          signal: direction,
+          trend: rawTrend,
+          status: 'ACTIVE_ENTERED',
+          entryPrice,
+          stopLoss,
+          target1,
+          target2,
+          target3,
+          pnlPct: 0.0,
+          lifecycleMsg: `New ${direction} setup entered at ${entryPrice}. SL: ${stopLoss}, TP1: ${target1}.`
+        };
+      } else {
+        const buf = Math.max(buffer, currentPrice * 0.005);
+        return {
+          signal: 'WAIT',
+          trend: rawTrend,
+          status: 'AWAITING_SETUP',
+          entryPrice: Number(currentPrice.toFixed(2)),
+          stopLoss: Number((currentPrice - buf).toFixed(2)),
+          target1: Number((currentPrice + buf * 1.5).toFixed(2)),
+          target2: Number((currentPrice + buf * 2.5).toFixed(2)),
+          target3: Number((currentPrice + buf * 4.0).toFixed(2)),
+          pnlPct: 0.0,
+          lifecycleMsg: 'Awaiting high-confluence institutional setup.'
+        };
+      }
+    }
+
+    // CASE 2: Active Trade Exists! Protect against whipsaw & manage lifecycle
+    const direction = trade.direction;
+    const entryPrice = trade.entryPrice;
+    const target1 = trade.target1;
+    const target2 = trade.target2;
+    const target3 = trade.target3;
+
+    trade.highestPrice = Math.max(trade.highestPrice || currentPrice, currentPrice);
+    trade.lowestPrice = Math.min(trade.lowestPrice || currentPrice, currentPrice);
+
+    const pnlPct = direction === 'BUY'
+      ? Number((((currentPrice - entryPrice) / entryPrice) * 100).toFixed(2))
+      : Number((((entryPrice - currentPrice) / entryPrice) * 100).toFixed(2));
+
+    // Hard structural invalidation (>= 80% confidence opposite + structure shift)
+    const isHardReversal = (
+      (direction === 'BUY' && rawSignal === 'SELL' && confidence >= 80 && smc && smc.structure && smc.structure.includes('BEARISH')) ||
+      (direction === 'SELL' && rawSignal === 'BUY' && confidence >= 80 && smc && smc.structure && smc.structure.includes('BULLISH'))
+    );
+
+    if (isHardReversal) {
+      delete this.activeTrades[key];
+      return {
+        signal: 'REVERSAL_EXIT',
+        trend: rawTrend,
+        status: 'REVERSED',
+        entryPrice: Number(currentPrice.toFixed(2)),
+        stopLoss: Number((currentPrice - buffer).toFixed(2)),
+        target1: Number((currentPrice + buffer * 1.5).toFixed(2)),
+        target2: Number((currentPrice + buffer * 2.5).toFixed(2)),
+        target3: Number((currentPrice + buffer * 4.0).toFixed(2)),
+        pnlPct,
+        lifecycleMsg: `Structural trend invalidation detected. Closed previous ${direction} position.`
+      };
+    }
+
+    // BUY Lifecycle
+    if (direction === 'BUY') {
+      if (currentPrice <= trade.stopLoss) {
+        delete this.activeTrades[key];
+        return {
+          signal: 'SL HIT (EXIT)',
+          trend: 'BEARISH BREAKDOWN',
+          status: 'STOPPED_OUT',
+          entryPrice,
+          stopLoss: trade.stopLoss,
+          target1,
+          target2,
+          target3,
+          pnlPct,
+          lifecycleMsg: `Stop Loss reached at ${trade.stopLoss} (${pnlPct}%). Position closed to protect capital.`
+        };
+      }
+
+      if (currentPrice >= target2) {
+        trade.tp2Hit = true;
+        trade.stopLoss = target1; // Trail SL to TP1
+        return {
+          signal: 'BUY (TP2 HIT)',
+          trend: 'STRONG BULLISH EXPANSION',
+          status: 'TP2_HIT',
+          entryPrice,
+          stopLoss: target1,
+          target1,
+          target2,
+          target3,
+          pnlPct,
+          lifecycleMsg: `🎯 Target 2 reached at ${target2} (+${pnlPct}%)! Trailing SL moved to ${target1}.`
+        };
+      }
+
+      if (currentPrice >= target1) {
+        trade.tp1Hit = true;
+        trade.trailingActive = true;
+        trade.stopLoss = entryPrice; // Breakeven
+        return {
+          signal: 'BUY (TP1 HIT)',
+          trend: 'BULLISH RUNNER',
+          status: 'TP1_HIT',
+          entryPrice,
+          stopLoss: entryPrice,
+          target1,
+          target2,
+          target3,
+          pnlPct,
+          lifecycleMsg: `🎯 Target 1 hit at ${target1} (+${pnlPct}%)! SL moved to Breakeven (${entryPrice}). Risk-free trade.`
+        };
+      }
+
+      // Normal Pullback / Fluctuation: KEEP SIGNAL BUY!
+      const statusDesc = currentPrice < entryPrice ? 'HEALTHY PULLBACK' : 'IN PROFIT';
+      const signalLabel = currentPrice < entryPrice ? 'BUY (HOLDING)' : 'BUY (ACTIVE)';
+
+      return {
+        signal: signalLabel,
+        trend: `BULLISH (${statusDesc})`,
+        status: 'ACTIVE_HOLD',
+        entryPrice,
+        stopLoss: trade.stopLoss,
+        target1,
+        target2,
+        target3,
+        pnlPct,
+        lifecycleMsg: `Holding BUY position entered at ${entryPrice}. Current: ${currentPrice} (${pnlPct >= 0 ? '+' : ''}${pnlPct}%). Holding above SL ${trade.stopLoss}.`
+      };
+    } else {
+      // SELL Lifecycle
+      if (currentPrice >= trade.stopLoss) {
+        delete this.activeTrades[key];
+        return {
+          signal: 'SL HIT (EXIT)',
+          trend: 'BULLISH BREAKOUT',
+          status: 'STOPPED_OUT',
+          entryPrice,
+          stopLoss: trade.stopLoss,
+          target1,
+          target2,
+          target3,
+          pnlPct,
+          lifecycleMsg: `Stop Loss reached at ${trade.stopLoss} (${pnlPct}%). Short closed to protect capital.`
+        };
+      }
+
+      if (currentPrice <= target2) {
+        trade.tp2Hit = true;
+        trade.stopLoss = target1;
+        return {
+          signal: 'SELL (TP2 HIT)',
+          trend: 'STRONG BEARISH EXPANSION',
+          status: 'TP2_HIT',
+          entryPrice,
+          stopLoss: target1,
+          target1,
+          target2,
+          target3,
+          pnlPct,
+          lifecycleMsg: `🎯 Target 2 reached at ${target2} (+${pnlPct}%)! Trailing SL moved to ${target1}.`
+        };
+      }
+
+      if (currentPrice <= target1) {
+        trade.tp1Hit = true;
+        trade.trailingActive = true;
+        trade.stopLoss = entryPrice;
+        return {
+          signal: 'SELL (TP1 HIT)',
+          trend: 'BEARISH RUNNER',
+          status: 'TP1_HIT',
+          entryPrice,
+          stopLoss: entryPrice,
+          target1,
+          target2,
+          target3,
+          pnlPct,
+          lifecycleMsg: `🎯 Target 1 hit at ${target1} (+${pnlPct}%)! SL moved to Breakeven (${entryPrice}). Risk-free trade.`
+        };
+      }
+
+      const statusDesc = currentPrice > entryPrice ? 'RELIEF BOUNCE' : 'IN PROFIT';
+      const signalLabel = currentPrice > entryPrice ? 'SELL (HOLDING)' : 'SELL (ACTIVE)';
+
+      return {
+        signal: signalLabel,
+        trend: `BEARISH (${statusDesc})`,
+        status: 'ACTIVE_HOLD',
+        entryPrice,
+        stopLoss: trade.stopLoss,
+        target1,
+        target2,
+        target3,
+        pnlPct,
+        lifecycleMsg: `Holding SELL position entered at ${entryPrice}. Current: ${currentPrice} (${pnlPct >= 0 ? '+' : ''}${pnlPct}%). Holding below SL ${trade.stopLoss}.`
+      };
+    }
+  },
+
   // 1-Year Historical & Macro Benchmarks for Indian Indices & Stocks
   get1YearMacroData(symbol, currentPrice, providedMacro = null) {
     if (providedMacro && providedMacro.high52W) {
@@ -256,44 +523,50 @@ const PredictionEngine = {
       confidence = Math.max(bullishProb, bearishProb);
     }
 
-    // 6. Dynamic 3-Tier Targets (Crypto SignAI & Tradelo style)
-    const entryPrice = currentPrice;
-    // Volatility buffer
+    // 6. Dynamic Stateful Trade Lifecycle & Noise Filter (Consistent 1m predictions)
     const buffer = Math.max(curATR * 1.1, currentPrice * (currentPrice > 10000 ? 0.0035 : 0.006));
-    let stopLoss = 0, target1 = 0, target2 = 0, target3 = 0;
+    const tradeState = this.updateTradeLifecycle(
+      symbol,
+      customParams.timeframe || '1m',
+      currentPrice,
+      signal,
+      trend,
+      confidence,
+      buffer,
+      smc
+    );
 
-    if (signal === 'BUY' || trend.includes('BULLISH')) {
-      stopLoss = Number((currentPrice - buffer).toFixed(2));
-      const risk = currentPrice - stopLoss;
-      target1 = Number((currentPrice + risk * 1.5).toFixed(2));
-      target2 = Number((currentPrice + risk * 2.5).toFixed(2));
-      target3 = Number((currentPrice + risk * 4.0).toFixed(2));
-    } else if (signal === 'SELL' || trend.includes('BEARISH')) {
-      stopLoss = Number((currentPrice + buffer).toFixed(2));
-      const risk = stopLoss - currentPrice;
-      target1 = Number((currentPrice - risk * 1.5).toFixed(2));
-      target2 = Number((currentPrice - risk * 2.5).toFixed(2));
-      target3 = Number((currentPrice - risk * 4.0).toFixed(2));
-    } else {
-      stopLoss = Number((currentPrice - buffer).toFixed(2));
-      target1 = Number((currentPrice + buffer * 1.5).toFixed(2));
-      target2 = Number((currentPrice + buffer * 2.5).toFixed(2));
-      target3 = Number((currentPrice + buffer * 4.0).toFixed(2));
-    }
+    const finalSignal = tradeState.signal;
+    const finalTrend = tradeState.trend;
+    const entryPrice = tradeState.entryPrice;
+    const stopLoss = tradeState.stopLoss;
+    const target1 = tradeState.target1;
+    const target2 = tradeState.target2;
+    const target3 = tradeState.target3;
+    const pnlPct = tradeState.pnlPct;
+    const lifecycleMsg = tradeState.lifecycleMsg;
 
     // 7. Generate Live Candle Tips & Ideas
-    const candleTips = this.generateCandleTips(currentCandle, signal, trend, smc, srLevels, macro1Y, symbol);
+    let candleTips = this.generateCandleTips(currentCandle, finalSignal, finalTrend, smc, srLevels, macro1Y, symbol);
+    if (finalSignal.includes('HOLDING') || finalSignal.includes('ACTIVE') || finalSignal.includes('HIT')) {
+      candleTips.candlePatternName = 'Active Trade Management';
+      candleTips.situation = `Current price: ${currentPrice} (${pnlPct >= 0 ? '+' : ''}${pnlPct}% from entry ${entryPrice}).`;
+      candleTips.tacticalTip = lifecycleMsg;
+      candleTips.stopLossTip = `Protective Stop Loss active at ${stopLoss}`;
+    }
 
     const curr = customParams.currency || (symbol.includes('USDT') ? '$' : '₹');
-    const voiceText = `AI Alert for ${symbol}: ${signal} signal with ${confidence} percent confidence. Entry at ${entryPrice}, Stop Loss at ${stopLoss}, Target at ${target1}. 1-Year Trend is ${macro1Y.bias}.`;
+    const voiceText = `AI Alert for ${symbol}: ${finalSignal} with ${confidence} percent confidence. Entry at ${entryPrice}, Stop Loss at ${stopLoss}, Target at ${target1}.`;
 
     return {
       timestamp: Date.now(),
       symbol,
       timeframe: customParams.timeframe || '15m',
       currentPrice: Number(currentPrice.toFixed(2)),
-      signal,
-      trend,
+      signal: finalSignal,
+      trend: finalTrend,
+      tradeStatus: tradeState.status,
+      pnlPercent: pnlPct,
       confidence,
       bullishProbability: bullishProb,
       bearishProbability: bearishProb,

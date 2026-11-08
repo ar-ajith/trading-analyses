@@ -370,10 +370,11 @@ const TVAI_Overlay = {
     const probScore = document.getElementById('tvai-prob-score');
     const probCaption = document.getElementById('tvai-prob-caption');
 
-    badge.className = `tvai-signal-badge ${data.signal.toLowerCase()}`;
+    const sigClass = data.signal.toLowerCase().includes('buy') ? 'buy' : (data.signal.toLowerCase().includes('sell') ? 'sell' : 'wait');
+    badge.className = `tvai-signal-badge ${sigClass}`;
     signalText.textContent = data.signal;
 
-    probScore.className = `tvai-prob-score ${data.signal.toLowerCase()}`;
+    probScore.className = `tvai-prob-score ${sigClass}`;
     probScore.textContent = `${data.confidence}%`;
     probCaption.textContent = `${data.trend} TREND`;
 

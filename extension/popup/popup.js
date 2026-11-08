@@ -311,6 +311,8 @@ document.addEventListener('DOMContentLoaded', () => {
   function applyDetectedStock(sym, price, tf, platform, precalculatedAnalysis = null) {
     let cleanSym = LiveMarketData.formatDisplaySymbol(sym);
 
+    const hasChanged = (activeSymbol !== cleanSym || activeTimeframe !== tf || Math.abs((livePrice || 0) - (price || 0)) > 0.05);
+
     activeSymbol = cleanSym;
     livePrice = price;
     activeTimeframe = tf || activeTimeframe;
@@ -318,7 +320,7 @@ document.addEventListener('DOMContentLoaded', () => {
     activeCurrency = '₹';
 
     liveSyncBanner.style.display = 'flex';
-    liveSyncText.textContent = `🟢 Linked: ${platform.toUpperCase()} · ${cleanSym} (${activeCurrency}${price ? formatPrice(price) : 'Live'})`;
+    liveSyncText.textContent = `🟢 Live Streaming: ${cleanSym} (${activeCurrency}${price ? formatPrice(price) : 'Live'}) · Auto-Synced`;
 
     marketTabs.forEach(t => t.classList.toggle('active', t.getAttribute('data-market') === 'in_stocks'));
     tfBtns.forEach(b => b.classList.toggle('active', b.getAttribute('data-tf') === activeTimeframe));
@@ -327,7 +329,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (precalculatedAnalysis) {
       renderAnalysis(precalculatedAnalysis);
-    } else {
+    } else if (hasChanged) {
       runAnalysis();
     }
   }
@@ -354,7 +356,6 @@ document.addEventListener('DOMContentLoaded', () => {
       analysis.currency = activeCurrency;
       if (livePrice && livePrice > 0) {
         analysis.currentPrice = livePrice;
-        analysis.entryPrice = livePrice;
       }
       renderAnalysis(analysis);
       backendLabel.textContent = isBackendOnline ? 'AI Backend' : 'Exchange Live';
@@ -385,11 +386,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const signalWord = document.getElementById('signal-word');
     signalWord.textContent = data.signal;
-    signalWord.className = `signal-title ${data.signal.toLowerCase()}`;
+    const sigClass = data.signal.toLowerCase().includes('buy') ? 'buy' : (data.signal.toLowerCase().includes('sell') ? 'sell' : 'wait');
+    signalWord.className = `signal-title ${sigClass}`;
 
     const confVal = document.getElementById('confidence-val');
     confVal.textContent = `${data.confidence}%`;
-    confVal.className = `confidence-val ${data.signal.toLowerCase()}`;
+    confVal.className = `confidence-val ${sigClass}`;
 
     document.getElementById('current-price-display').textContent = `Current Price: ${curr}${formatPrice(data.currentPrice)}`;
 
@@ -637,16 +639,39 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
+  // Real-Time Zero-Click WebSocket & Broadcast Stream Listener
+  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
+    chrome.runtime.onMessage.addListener((request) => {
+      if (request.action === 'LIVE_STREAM_TICK' && request.data) {
+        const d = request.data;
+        renderAnalysis(d);
+        liveSyncBanner.style.display = 'flex';
+        liveSyncText.textContent = `🟢 Live Streaming: ${d.symbol} (${d.currency || '₹'}${formatPrice(d.currentPrice)}) · Auto-Synced`;
+      }
+    });
+  }
+
+  // Load latest cached live analysis instantly if available
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+    chrome.storage.local.get(['latestLiveAnalysis', 'tradeJournal'], (res) => {
+      if (res.latestLiveAnalysis) {
+        renderAnalysis(res.latestLiveAnalysis);
+      }
+      if (res.tradeJournal) {
+        updateJournalCount(res.tradeJournal.length);
+      }
+    });
+  }
+
   // Initialize
   populateSymbols('in_stocks', 'NIFTY 50');
   checkBackend().then(() => {
     syncWithActiveTab();
     runAnalysis();
-  });
 
-  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-    chrome.storage.local.get(['tradeJournal'], (res) => {
-      updateJournalCount((res.tradeJournal || []).length);
-    });
-  }
+    // Auto-stream ticker loop (checks active chart tab every 1.5s with zero clicks needed)
+    setInterval(() => {
+      syncWithActiveTab(true);
+    }, 1500);
+  });
 });

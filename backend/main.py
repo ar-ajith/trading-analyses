@@ -2,10 +2,12 @@
 FastAPI Server for AI Trading Prediction & Chart Analysis Extension
 """
 
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import FastAPI, Query, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional, Dict, Any, List
 import uvicorn
+import json
+import asyncio
 
 from market_data import get_live_market_data
 from ml_model import predictor
@@ -74,14 +76,100 @@ def analyze_market(
         analysis["currency"] = "₹" if is_indian else "$"
         analysis["market"] = "in_stocks" if is_indian else market
 
-        # If live_price was supplied from Upstox, ensure entryPrice aligns
+        # If live_price was supplied from Upstox, update currentPrice
         if clean_price is not None and clean_price > 0:
             analysis["currentPrice"] = clean_price
-            analysis["entryPrice"] = clean_price
 
         return analysis
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.websocket("/ws/live")
+async def websocket_live_stream(websocket: WebSocket):
+    """
+    Real-Time WebSocket Streaming Endpoint
+    Streams live analysis & trade lifecycle states at 1.5s intervals without manual clicks.
+    """
+    await websocket.accept()
+    sub = {
+        "symbol": "JIOFIN",
+        "timeframe": "1m",
+        "market": "in_stocks",
+        "price": None
+    }
+
+    async def client_listener():
+        try:
+            while True:
+                msg_text = await websocket.receive_text()
+                try:
+                    payload = json.loads(msg_text)
+                    if "symbol" in payload and payload["symbol"]:
+                        sub["symbol"] = str(payload["symbol"]).strip().upper()
+                    if "timeframe" in payload and payload["timeframe"]:
+                        sub["timeframe"] = str(payload["timeframe"]).strip()
+                    if "market" in payload and payload["market"]:
+                        sub["market"] = str(payload["market"]).strip()
+                    if "price" in payload and payload["price"] is not None:
+                        try:
+                            sub["price"] = round(float(payload["price"]), 2)
+                        except (ValueError, TypeError):
+                            pass
+                except Exception:
+                    pass
+        except WebSocketDisconnect:
+            pass
+
+    listener_task = asyncio.create_task(client_listener())
+
+    try:
+        while True:
+            try:
+                sym = sub["symbol"]
+                tf = sub["timeframe"]
+                mkt = sub["market"]
+                px = sub["price"]
+
+                df, macro_data = get_live_market_data(sym, interval=tf, market_type=mkt, live_price=px)
+                if df is not None and len(df) >= 5:
+                    analysis = predictor.analyze(df, symbol=sym, timeframe=tf, macro_data=macro_data)
+                    is_indian = (mkt == "in_stocks") or sym.endswith(".NS") or sym.endswith(".BO") or sym in [
+                        "JIOFIN", "SUZLON", "TATASTEEL", "TITAN", "RELIANCE", "TATAMOTORS",
+                        "HDFCBANK", "INFY", "TCS", "NIFTY50", "BANKNIFTY", "ONGC", "TECHM",
+                        "INOXWIND", "GREAVESCOT", "GOLDBEES", "GMRAIRPORT", "TATAGOLD"
+                    ]
+                    analysis["currency"] = "₹" if is_indian else "$"
+                    analysis["market"] = "in_stocks" if is_indian else mkt
+                    if px is not None and px > 0:
+                        analysis["currentPrice"] = px
+
+                    await websocket.send_json({
+                        "type": "LIVE_TICK",
+                        "symbol": sym,
+                        "timeframe": tf,
+                        "data": analysis
+                    })
+                else:
+                    await websocket.send_json({
+                        "type": "HEARTBEAT",
+                        "status": "waiting_data",
+                        "symbol": sym
+                    })
+            except Exception as loop_err:
+                try:
+                    await websocket.send_json({
+                        "type": "HEARTBEAT",
+                        "status": "active",
+                        "symbol": sub["symbol"]
+                    })
+                except Exception:
+                    break
+
+            await asyncio.sleep(1.5)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        listener_task.cancel()
 
 @app.get("/api/symbols")
 def get_supported_symbols():

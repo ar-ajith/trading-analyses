@@ -3,6 +3,7 @@ Machine Learning & Quantitative Signal Prediction Model
 Combines Scikit-Learn Ensemble ML with Technical Indicator Confluence Scoring.
 """
 
+import time
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
@@ -14,10 +15,285 @@ from indicators import (
     detect_candlestick_patterns, detect_smart_money_concepts
 )
 
+class TradeLifecycleManager:
+    """
+    Stateful Trade Lifecycle & Noise Filter
+    Prevents 1-minute whipsaws, locks in entry, stop loss, and targets,
+    and manages trade states (HOLDING, TP1_HIT, TP2_HIT, SL_HIT).
+    """
+    def __init__(self):
+        self.active_trades: Dict[str, Dict[str, Any]] = {}
+
+    def get_trade_key(self, symbol: str, timeframe: str) -> str:
+        clean_sym = symbol.strip().upper().replace(".NS", "").replace(".BO", "").replace("^", "")
+        return f"{clean_sym}_{timeframe.lower()}"
+
+    def get_active_trade(self, symbol: str, timeframe: str) -> Optional[Dict[str, Any]]:
+        key = self.get_trade_key(symbol, timeframe)
+        trade = self.active_trades.get(key)
+        if trade:
+            # Expire trades older than 4 hours for 1m, or 24 hours for others
+            max_age = 14400 if timeframe in ['1m', '5m'] else 86400
+            if time.time() - trade.get('start_time', 0) > max_age:
+                del self.active_trades[key]
+                return None
+        return trade
+
+    def register_or_update(
+        self,
+        symbol: str,
+        timeframe: str,
+        current_price: float,
+        raw_signal: str,
+        raw_trend: str,
+        confidence: int,
+        buffer: float,
+        smc: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        key = self.get_trade_key(symbol, timeframe)
+        trade = self.get_active_trade(symbol, timeframe)
+
+        # CASE 1: No active trade exists yet
+        if not trade:
+            min_conf = 63 if timeframe in ['1m', '5m'] else 60
+            if raw_signal in ['BUY', 'SELL'] and confidence >= min_conf:
+                direction = raw_signal
+                entry_price = round(current_price, 2)
+                risk_buf = max(buffer, entry_price * 0.005)
+                
+                if direction == 'BUY':
+                    stop_loss = round(entry_price - risk_buf, 2)
+                    risk = max(0.01, entry_price - stop_loss)
+                    target1 = round(entry_price + (risk * 1.5), 2)
+                    target2 = round(entry_price + (risk * 2.5), 2)
+                    target3 = round(entry_price + (risk * 4.0), 2)
+                else:
+                    stop_loss = round(entry_price + risk_buf, 2)
+                    risk = max(0.01, stop_loss - entry_price)
+                    target1 = round(entry_price - (risk * 1.5), 2)
+                    target2 = round(entry_price - (risk * 2.5), 2)
+                    target3 = round(entry_price - (risk * 4.0), 2)
+
+                trade = {
+                    "symbol": symbol,
+                    "timeframe": timeframe,
+                    "direction": direction,
+                    "status": "ACTIVE_HOLD",
+                    "entry_price": entry_price,
+                    "initial_stop_loss": stop_loss,
+                    "stop_loss": stop_loss,
+                    "target1": target1,
+                    "target2": target2,
+                    "target3": target3,
+                    "start_time": time.time(),
+                    "tp1_hit": False,
+                    "tp2_hit": False,
+                    "trailing_active": False,
+                    "highest_price": current_price,
+                    "lowest_price": current_price
+                }
+                self.active_trades[key] = trade
+                
+                return {
+                    "signal": direction,
+                    "trend": raw_trend,
+                    "status": "ACTIVE_ENTERED",
+                    "entry_price": entry_price,
+                    "stop_loss": stop_loss,
+                    "target1": target1,
+                    "target2": target2,
+                    "target3": target3,
+                    "pnl_pct": 0.0,
+                    "lifecycle_msg": f"New {direction} trade initiated at {entry_price}. SL: {stop_loss}, TP1: {target1}."
+                }
+            else:
+                buf = max(buffer, current_price * 0.005)
+                return {
+                    "signal": "WAIT",
+                    "trend": raw_trend,
+                    "status": "AWAITING_SETUP",
+                    "entry_price": round(current_price, 2),
+                    "stop_loss": round(current_price - buf, 2),
+                    "target1": round(current_price + (buf * 1.5), 2),
+                    "target2": round(current_price + (buf * 2.5), 2),
+                    "target3": round(current_price + (buf * 4.0), 2),
+                    "pnl_pct": 0.0,
+                    "lifecycle_msg": "Awaiting institutional confluence before entering."
+                }
+
+        # CASE 2: Active Trade ALREADY Exists! Protect against whipsaw & manage lifecycle
+        direction = trade["direction"]
+        entry_price = trade["entry_price"]
+        stop_loss = trade["stop_loss"]
+        target1 = trade["target1"]
+        target2 = trade["target2"]
+        target3 = trade["target3"]
+
+        trade["highest_price"] = max(trade.get("highest_price", current_price), current_price)
+        trade["lowest_price"] = min(trade.get("lowest_price", current_price), current_price)
+
+        pnl_pct = round(((current_price - entry_price) / entry_price) * 100, 2) if direction == 'BUY' else round(((entry_price - current_price) / entry_price) * 100, 2)
+
+        # Check for Structural Invalidation (only on major opposite trend >= 80% + CHoCH)
+        is_hard_reversal = (
+            (direction == 'BUY' and raw_signal == 'SELL' and confidence >= 80 and 'BEARISH' in smc.get('structure', '')) or
+            (direction == 'SELL' and raw_signal == 'BUY' and confidence >= 80 and 'BULLISH' in smc.get('structure', ''))
+        )
+
+        if is_hard_reversal:
+            del self.active_trades[key]
+            return {
+                "signal": "REVERSAL_EXIT",
+                "trend": raw_trend,
+                "status": "REVERSED",
+                "entry_price": round(current_price, 2),
+                "stop_loss": round(current_price - buffer, 2) if raw_signal == 'BUY' else round(current_price + buffer, 2),
+                "target1": round(current_price + buffer * 1.5, 2) if raw_signal == 'BUY' else round(current_price - buffer * 1.5, 2),
+                "target2": round(current_price + buffer * 2.5, 2),
+                "target3": round(current_price + buffer * 4.0, 2),
+                "pnl_pct": pnl_pct,
+                "lifecycle_msg": f"Structural trend invalidation detected. Closed previous {direction} position at {current_price}."
+            }
+
+        # Check BUY trade lifecycle
+        if direction == 'BUY':
+            if current_price <= stop_loss:
+                del self.active_trades[key]
+                return {
+                    "signal": "SL HIT (EXIT)",
+                    "trend": "BEARISH BREAKDOWN",
+                    "status": "STOPPED_OUT",
+                    "entry_price": entry_price,
+                    "stop_loss": stop_loss,
+                    "target1": target1,
+                    "target2": target2,
+                    "target3": target3,
+                    "pnl_pct": pnl_pct,
+                    "lifecycle_msg": f"Stop Loss reached at {stop_loss} ({pnl_pct}%). Trade closed. Capital protected."
+                }
+
+            if current_price >= target2:
+                trade["tp2_hit"] = True
+                trade["stop_loss"] = target1
+                return {
+                    "signal": "BUY (TP2 HIT)",
+                    "trend": "STRONG BULLISH EXPANSION",
+                    "status": "TP2_HIT",
+                    "entry_price": entry_price,
+                    "stop_loss": target1,
+                    "target1": target1,
+                    "target2": target2,
+                    "target3": target3,
+                    "pnl_pct": pnl_pct,
+                    "lifecycle_msg": f"🎯 Target 2 reached at {target2} (+{pnl_pct}%)! Stop Loss trailed to {target1} to secure profit."
+                }
+
+            if current_price >= target1:
+                trade["tp1_hit"] = True
+                trade["trailing_active"] = True
+                trade["stop_loss"] = entry_price
+                return {
+                    "signal": "BUY (TP1 HIT)",
+                    "trend": "BULLISH RUNNER",
+                    "status": "TP1_HIT",
+                    "entry_price": entry_price,
+                    "stop_loss": entry_price,
+                    "target1": target1,
+                    "target2": target2,
+                    "target3": target3,
+                    "pnl_pct": pnl_pct,
+                    "lifecycle_msg": f"🎯 Target 1 hit at {target1} (+{pnl_pct}%)! SL moved to Breakeven ({entry_price}). Risk-free trade active."
+                }
+
+            # Normal Pullback / Fluctuation within active trade
+            # Do NOT flip to SELL!
+            status_desc = "HEALTHY PULLBACK" if current_price < entry_price else "IN PROFIT"
+            signal_label = "BUY (HOLDING)" if current_price < entry_price else "BUY (ACTIVE)"
+            
+            return {
+                "signal": signal_label,
+                "trend": f"BULLISH ({status_desc})",
+                "status": "ACTIVE_HOLD",
+                "entry_price": entry_price,
+                "stop_loss": trade["stop_loss"],
+                "target1": target1,
+                "target2": target2,
+                "target3": target3,
+                "pnl_pct": pnl_pct,
+                "lifecycle_msg": f"Holding BUY position entered at {entry_price}. Price at {current_price} ({'+' if pnl_pct>=0 else ''}{pnl_pct}%). Protected above SL {trade['stop_loss']}."
+            }
+
+        # Check SELL trade lifecycle (Short)
+        else:
+            if current_price >= stop_loss:
+                del self.active_trades[key]
+                return {
+                    "signal": "SL HIT (EXIT)",
+                    "trend": "BULLISH BREAKOUT",
+                    "status": "STOPPED_OUT",
+                    "entry_price": entry_price,
+                    "stop_loss": stop_loss,
+                    "target1": target1,
+                    "target2": target2,
+                    "target3": target3,
+                    "pnl_pct": pnl_pct,
+                    "lifecycle_msg": f"Stop Loss reached at {stop_loss} ({pnl_pct}%). Short closed. Capital protected."
+                }
+
+            if current_price <= target2:
+                trade["tp2_hit"] = True
+                trade["stop_loss"] = target1
+                return {
+                    "signal": "SELL (TP2 HIT)",
+                    "trend": "STRONG BEARISH EXPANSION",
+                    "status": "TP2_HIT",
+                    "entry_price": entry_price,
+                    "stop_loss": target1,
+                    "target1": target1,
+                    "target2": target2,
+                    "target3": target3,
+                    "pnl_pct": pnl_pct,
+                    "lifecycle_msg": f"🎯 Target 2 reached at {target2} (+{pnl_pct}%)! Stop Loss trailed to {target1} to secure profit."
+                }
+
+            if current_price <= target1:
+                trade["tp1_hit"] = True
+                trade["trailing_active"] = True
+                trade["stop_loss"] = entry_price
+                return {
+                    "signal": "SELL (TP1 HIT)",
+                    "trend": "BEARISH RUNNER",
+                    "status": "TP1_HIT",
+                    "entry_price": entry_price,
+                    "stop_loss": entry_price,
+                    "target1": target1,
+                    "target2": target2,
+                    "target3": target3,
+                    "pnl_pct": pnl_pct,
+                    "lifecycle_msg": f"🎯 Target 1 hit at {target1} (+{pnl_pct}%)! SL moved to Breakeven ({entry_price}). Risk-free trade active."
+                }
+
+            status_desc = "RELIEF BOUNCE" if current_price > entry_price else "IN PROFIT"
+            signal_label = "SELL (HOLDING)" if current_price > entry_price else "SELL (ACTIVE)"
+            
+            return {
+                "signal": signal_label,
+                "trend": f"BEARISH ({status_desc})",
+                "status": "ACTIVE_HOLD",
+                "entry_price": entry_price,
+                "stop_loss": trade["stop_loss"],
+                "target1": target1,
+                "target2": target2,
+                "target3": target3,
+                "pnl_pct": pnl_pct,
+                "lifecycle_msg": f"Holding SELL position entered at {entry_price}. Price at {current_price} ({'+' if pnl_pct>=0 else ''}{pnl_pct}%). Protected below SL {trade['stop_loss']}."
+            }
+
 class TradingPredictorML:
     def __init__(self):
         self.model = RandomForestClassifier(n_estimators=60, max_depth=5, random_state=42)
         self.is_trained = False
+        self.lifecycle_mgr = TradeLifecycleManager()
         
     def extract_features(self, df: pd.DataFrame) -> pd.DataFrame:
         close = df['close']
@@ -192,31 +468,33 @@ class TradingPredictorML:
             trend = "MILDLY BULLISH" if bullish_pct > 52 else ("MILDLY BEARISH" if bearish_pct > 52 else "NEUTRAL")
             confidence = max(bullish_pct, bearish_pct)
             
-        # Dynamic Risk Bracket Targets (3-tier targets from Crypto SignAI)
+        # 1-minute Consistent Hysteresis & Stateful Trade Lifecycle
         buffer = max(cur_atr * 1.2, current_price * 0.005)
-        entry_price = round(current_price, 2)
         smc = detect_smart_money_concepts(df)
         sentiment_score = int(np.clip((bullish_pct - 50) * 2, -100, 100))
-        
-        if signal == "BUY" or "BULLISH" in trend:
-            stop_loss = round(entry_price - buffer, 2)
-            risk = max(0.01, entry_price - stop_loss)
-            target1 = round(entry_price + (risk * 1.5), 2)
-            target2 = round(entry_price + (risk * 2.5), 2)
-            target3 = round(entry_price + (risk * 4.0), 2)
-        elif signal == "SELL" or "BEARISH" in trend:
-            stop_loss = round(entry_price + buffer, 2)
-            risk = max(0.01, stop_loss - entry_price)
-            target1 = round(entry_price - (risk * 1.5), 2)
-            target2 = round(entry_price - (risk * 2.5), 2)
-            target3 = round(entry_price - (risk * 4.0), 2)
-        else:
-            stop_loss = round(entry_price - buffer, 2)
-            target1 = round(entry_price + (buffer * 1.5), 2)
-            target2 = round(entry_price + (buffer * 2.5), 2)
-            target3 = round(entry_price + (buffer * 4.0), 2)
 
-        voice_text = f"AI Alert for {symbol}: {signal} signal with {confidence} percent confidence. Entry at {entry_price}, Stop Loss at {stop_loss}, Target at {target1}."
+        trade_state = self.lifecycle_mgr.register_or_update(
+            symbol=symbol,
+            timeframe=timeframe,
+            current_price=current_price,
+            raw_signal=signal,
+            raw_trend=trend,
+            confidence=confidence,
+            buffer=buffer,
+            smc=smc
+        )
+
+        final_signal = trade_state["signal"]
+        final_trend = trade_state["trend"]
+        entry_price = trade_state["entry_price"]
+        stop_loss = trade_state["stop_loss"]
+        target1 = trade_state["target1"]
+        target2 = trade_state["target2"]
+        target3 = trade_state["target3"]
+        pnl_pct = trade_state["pnl_pct"]
+        lifecycle_msg = trade_state["lifecycle_msg"]
+
+        voice_text = f"AI Alert for {symbol}: {final_signal} with {confidence} percent confidence. Entry at {entry_price}, Stop Loss at {stop_loss}, Target at {target1}."
             
         # 1-Year Macro data incorporation
         macro_info = macro_data or {
@@ -231,14 +509,18 @@ class TradingPredictorML:
         c_upper = last_c['high'] - max(last_c['open'], last_c['close'])
         c_lower = min(last_c['open'], last_c['close']) - last_c['low']
 
-        if last_c['close'] >= last_c['open'] and c_upper < c_body * 0.2:
+        if "HOLDING" in final_signal or "ACTIVE" in final_signal or "HIT" in final_signal:
+            candle_name = "Active Position Tracking"
+            candle_sit = f"Price at {round(current_price, 2)} ({'+' if pnl_pct >= 0 else ''}{pnl_pct}% from entry {entry_price})."
+            tactical_tip = lifecycle_msg
+        elif last_c['close'] >= last_c['open'] and c_upper < c_body * 0.2:
             candle_name = "Bullish Expansion Bar"
             candle_sit = f"Strong buyer push from {last_c['open']} to {last_c['close']}. Dominant volume."
-            tactical_tip = f"Wait for slight pullback towards {round(entry_price - buffer*0.5, 2)} before entering. Do not chase high wicks."
+            tactical_tip = f"Wait for slight pullback towards {round(current_price - buffer*0.5, 2)} before entering. Do not chase high wicks."
         elif last_c['close'] < last_c['open'] and c_lower < c_body * 0.2:
             candle_name = "Bearish Selling Bar"
             candle_sit = f"Aggressive selling from {last_c['open']} down to {last_c['close']}."
-            tactical_tip = f"Look for relief bounce towards {round(entry_price + buffer*0.5, 2)} for short entry."
+            tactical_tip = f"Look for relief bounce towards {round(current_price + buffer*0.5, 2)} for short entry."
         else:
             candle_name = "Consolidation Bar"
             candle_sit = f"Price balancing between {last_c['low']} and {last_c['high']}."
@@ -248,7 +530,7 @@ class TradingPredictorML:
             "candlePatternName": candle_name,
             "situation": candle_sit,
             "tacticalTip": tactical_tip,
-            "stopLossTip": f"Place protective stop loss at {stop_loss}",
+            "stopLossTip": f"Protective Stop Loss active at {stop_loss}",
             "previousYearEdge": f"Macro 1-Year Trend is {macro_info.get('bias', 'Active')}. 200-SMA: {macro_info.get('sma200', '--')}"
         }
 
@@ -256,9 +538,11 @@ class TradingPredictorML:
             "timestamp": int(df['timestamp'].iloc[-1]) if 'timestamp' in df else int(pd.Timestamp.now().timestamp() * 1000),
             "symbol": symbol,
             "timeframe": timeframe,
-            "currentPrice": entry_price,
-            "signal": signal,
-            "trend": trend,
+            "currentPrice": round(current_price, 2),
+            "signal": final_signal,
+            "trend": final_trend,
+            "tradeStatus": trade_state["status"],
+            "pnlPercent": pnl_pct,
             "confidence": confidence,
             "bullishProbability": bullish_pct,
             "bearishProbability": bearish_pct,
